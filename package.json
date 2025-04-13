@@ -1,7 +1,7 @@
 {
-  "name": "galaga-phaser-game",
+  "name": "multiplayer-arcade-space-shooter",
   "version": "1.0.0",
-  "description": "A Galaga-style game built with Phaser.",
+  "description": "A multiplayer arcade space shooter built with Phaser.",
   "main": "main.js",
   "scripts": {
     "compile": "tsc",

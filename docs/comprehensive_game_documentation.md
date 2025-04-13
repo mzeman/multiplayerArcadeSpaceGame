@@ -1,12 +1,12 @@
-# Comprehensive Game Documentation: Galaga-Style Multiplayer Shooter
+# Comprehensive Game Documentation: Multiplayer Arcade Space Shooter
 
 ## 1. Introduction
 
-This document provides comprehensive documentation for the Galaga-style multiplayer shooter project. It details the game's core functionality, technical architecture, current implementation state, and known issues. The project began as a single-player game and evolved into a real-time multiplayer experience featuring a server-authoritative architecture, ensuring consistency and fairness across all connected clients.
+This document provides comprehensive documentation for the multiplayer arcade space shooter project. It details the game's core functionality, technical architecture, current implementation state, and known issues. The project began as a single-player game and evolved into a real-time multiplayer experience featuring a server-authoritative architecture, ensuring consistency and fairness across all connected clients.
 
 ## 2. Core Gameplay
 
-*   **Concept:** A top-down space shooter inspired by classic arcade games like Galaga.
+*   **Concept:** A top-down space shooter inspired by classic arcade games.
 *   **Player Control:** Players control individual ships, moving horizontally and vertically, and firing projectiles upwards. Input is sent to the server, which determines the authoritative position.
 *   **Enemies:** Two primary enemy types exist: NormalEnemy (Type 1) and FalconEnemy (Type 2).
 *   **Waves:** Enemies appear in predefined waves, spawned and moved authoritatively by the server.
