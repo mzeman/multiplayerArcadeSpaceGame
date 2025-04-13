@@ -20,7 +20,6 @@ This document provides comprehensive documentation for the Galaga-style multipla
 The game employs a server-authoritative architecture. The Node.js server (`server/server.js`) acts as the single source of truth for all critical game state and logic. Clients (`src/scenes/GameScene.ts`) primarily send input to the server and render the game world based on the state updates received from the server. Shared, framework-agnostic logic for enemy wave management is located in `src/shared/EnemyWaveManagerCore.ts`.
 
 ![Architecture Overview](documentation_assets/architecture_overview.png)
-*Note: This is a placeholder image generated from a simplified test diagram due to rendering issues with the original complex diagram's syntax using the current `mmdc` version.*
 
 <details><summary>Mermaid Code (Architecture Overview)</summary>
 
