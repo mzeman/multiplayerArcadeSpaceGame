@@ -1,0 +1,16 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json
+
+# Build output
+dist/
+
+# Archives
+_archived_documentation/
+_archive_implementation_plans/
+
+# Temporary files
+*.mmd
+node_modules
