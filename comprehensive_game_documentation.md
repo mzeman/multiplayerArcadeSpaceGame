@@ -25,26 +25,23 @@ The game employs a server-authoritative architecture. The Node.js server (`serve
 
 ```mermaid
 flowchart TD
-    subgraph Client (Phaser)
-        C_Input[Input (Keyboard)] --> C_Scene(GameScene.ts)
-        C_Scene -- Sends Input --> C_WS(MultiplayerClient.ts)
-        C_WS -- WebSocket --> S_WS(Server WebSocket)
-        C_Scene <-- Receives State --- C_WS
-        C_Scene --> C_Render[Rendering Engine]
-        C_Render --> C_Display(Display)
-        C_Scene --> C_Shared(EnemyWaveManager.ts Adapter)
-        C_Shared --> C_Core(Shared/EnemyWaveManagerCore.ts)
+    subgraph client [Client]
+        C_Input["Input (Keyboard)"] --> C_Scene("GameScene.ts")
+        C_Scene -- "Sends Input" --> C_WS("MultiplayerClient.ts")
+        C_WS -- "WebSocket" --> S_WS("Server WebSocket")
+        C_WS -- "Received State" --> C_Scene
+        C_Scene --> C_Render["Rendering Engine"]
+        C_Render --> C_Display("Display")
+        C_Scene --> C_Shared("EnemyWaveManager.ts Adapter")
+        C_Shared --> C_Core("Shared/EnemyWaveManagerCore.ts")
     end
-    subgraph Server (Node.js)
-        S_WS --> S_Logic(server.js Logic)
-        S_Logic -- Uses --> S_Core(Shared/EnemyWaveManagerCore.ts)
-        S_Logic --> S_State[Authoritative Game State]
+    subgraph server [Server]
+        S_WS --> S_Logic("server.js Logic")
+        S_Logic -- "Uses" --> C_Core
+        S_Logic --> S_State["Authoritative Game State"]
         S_State --> S_Logic
-        S_Logic -- Broadcasts State --> S_WS
+        S_Logic -- "Broadcasts State" --> S_WS
     end
-
-    style C_Core fill:#ddd,stroke:#333
-    style S_Core fill:#ddd,stroke:#333
 ```
 
 </details>
