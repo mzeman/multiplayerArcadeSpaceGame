@@ -11,7 +11,7 @@ This document provides comprehensive documentation for the multiplayer arcade sp
 *   **Enemies:** Two primary enemy types exist: NormalEnemy (Type 1) and FalconEnemy (Type 2).
 *   **Waves:** Enemies appear in predefined waves, spawned and moved authoritatively by the server.
 *   **Objective:** Survive incoming enemy waves and projectiles for as long as possible.
-*   **Game Over/Restart:** The game ends when a player loses all their lives (currently tracked per player on the server). Players can request a game restart via the Game Over UI, which triggers a server-side state reset.
+*   **Game Over/Restart:** The game enters a "Game Over" state only when *all* connected players have 0 lives. Players with 0 lives become inactive (cannot move/shoot, sprite hidden) but can observe until the game ends. The Game Over UI allows any player to request a server-side game reset.
 
 ## 3. Architecture
 
@@ -49,34 +49,38 @@ flowchart TD
 
 *   Manages WebSocket connections.
 *   Assigns unique IDs and colors to connecting players.
-*   Maintains the authoritative state: `players`, `playerBullets`, `enemyBullets`, enemy state (via `EnemyWaveManagerCore`), `waveNumber`.
+*   Maintains the authoritative state: `players` (including `lives`, `isActive`, `isInvincible`), `playerBullets`, `enemyBullets` (including `bulletType`), enemy state (via `EnemyWaveManagerCore`), `waveNumber`, `gameState` ('playing' or 'gameOver').
 *   Listens for client messages: `input` (movement/firing), `ready` (to start game), `requestRestart`.
 *   Runs a fixed-tick game loop (`updateGameState` at ~60Hz):
-    *   Updates player positions based on last received input.
-    *   Creates player bullets based on `fire` input and client-provided details (ID, position, velocity).
-    *   Updates all bullet positions (player and enemy) and removes out-of-bounds bullets.
+    *   Updates active player positions based on last received input (ignores input from inactive players).
+    *   Creates player bullets based on `fire` input from active players.
+    *   Updates all bullet positions and removes out-of-bounds bullets.
     *   Updates enemy state (position, visibility) via `EnemyWaveManagerCore.update()`.
-    *   Handles enemy firing logic (Normal and Falcon types).
-    *   Performs all collision detection (Player Bullet vs Enemy, Enemy Bullet vs Player, Enemy vs Player) using AABB checks.
-    *   Updates entity states based on collisions (player lives, enemy active status).
-    *   Handles wave progression via `EnemyWaveManagerCore`.
+    *   Handles enemy firing logic, enforcing a limit of one shot per enemy type per second across all enemies.
+    *   Performs collision detection, checking player invincibility before applying damage.
+    *   Updates entity states based on collisions (player `lives`, player `isActive`, enemy `active`).
+    *   Checks if all players are inactive to set `gameState` to 'gameOver'.
+    *   Handles wave progression via `EnemyWaveManagerCore` if `gameState` is 'playing'.
 *   Broadcasts the complete `authoritativeState` to all clients regularly.
-*   Handles game state resets on `requestRestart`.
+*   Handles game state resets on `requestRestart` (resets `gameState`, player `lives`/`isActive`, bullets, wave).
 
 ### 3.3 Client Responsibilities (`src/scenes/GameScene.ts`)
 
 *   Connects to the server via WebSocket (`MultiplayerClient`).
 *   Sends `ready` message after splash screen.
-*   Sends `input` messages (movement state, fire state, predicted bullet details) to the server on user interaction.
+*   Sends `input` messages (movement, fire, predicted bullet details) to the server if the local player is active.
+*   Sends `toggleInvincible` message when CTRL key is pressed if the local player is active.
 *   Receives `authoritativeState` messages from the server.
 *   Reconciles local game objects with the server state:
     *   Creates/updates/destroys player sprites (interpolating remote players, directly setting local player).
     *   Creates/updates/destroys enemy sprites (interpolating movement).
     *   Reconciles player bullets (correcting predicted bullets, creating/destroying others).
-    *   Reconciles enemy bullets (creating/updating/destroying).
+    *   Reconciles enemy bullets, applying an orange tint to sprites identified with `bulletType: 'falcon'`.
 *   Renders the game world based on the reconciled state.
 *   Updates UI elements (`GameHUD`) based on received state.
-*   Displays `GameOverUI` based on local player lives (updated by `CollisionManager` based on local detection, though authoritative lives come from server) and sends `requestRestart` on button click.
+*   Displays "Waiting..." text if the local player is inactive (`isActive: false`) but the overall `gameState` is 'playing'.
+*   Displays `GameOverUI` only when the server's `gameState` is 'gameOver'. Sends `requestRestart` on button click.
+*   Applies a pulsating visual effect to the local player sprite when `isInvincible` is true in the server state.
 *   Manages client-side managers (`InputManager`, `CollisionManager`, `EnemyWaveManager` adapter, `GameHUD`, `GameOverUI`).
 *   Handles client-side prediction for locally fired bullets.
 
@@ -108,21 +112,23 @@ sequenceDiagram
     Server->>Server: enemyWaveManager.startWave(1)
 
     loop Game Loop (~60Hz)
-        Client->>Server: input (movement, fire?, newBullet?)
-        Server->>Server: Process Input (Update Player Pos, Create Player Bullet)
+        Client->>Server: input (movement, fire?, newBullet?) [if active]
+        Client->>Server: toggleInvincible [if active, on CTRL press]
+        Server->>Server: Process Input (Update Active Player Pos, Create Player Bullet)
         Server->>Server: Update Entities (Bullets, Enemies via Core)
-        Server->>Server: Handle Enemy Firing
-        Server->>Server: Detect Collisions (Update Lives, Enemy Active Status)
-        Server->>Server: Check Wave Progression
+        Server->>Server: Handle Enemy Firing (Type-based limit)
+        Server->>Server: Detect Collisions (Check Invincibility, Update Lives, Player Active Status, Enemy Active Status)
+        Server->>Server: Check Game Over Condition (All players inactive?)
+        Server->>Server: Check Wave Progression [if game not over]
         Server->>Server: Gather Authoritative State
-        Server->>Client: authoritative_state (players, enemies, bullets, wave)
+        Server->>Client: authoritative_state (players[isActive, isInvincible], enemies, bullets[bulletType], wave, gameState)
         Client->>Client: Reconcile State & Interpolate/Predict
         Client->>Client: Render Scene
     end
 
     Client->>Server: requestRestart (from GameOverUI)
     Server->>Server: resetGameState()
-    Server->>Client: authoritative_state (reset)
+    Server->>Client: authoritative_state (reset, gameState='playing')
 ```
 
 </details>
@@ -184,6 +190,8 @@ classDiagram
         +Sprite sprite
         +number lives
         +string color
+        +boolean isActive
+        +boolean isInvincible
         +setColor()
         +destroy()
     }
@@ -206,6 +214,7 @@ classDiagram
     class GameOverUI {
         +show()
         +hide()
+        +isVisible()
     }
     class InputManager {
         +getCursorKeys()
@@ -240,13 +249,15 @@ classDiagram
 
 | Feature          | Description                                                                                                                               | Location(s)                                     |
 | :--------------- | :---------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------- |
-| **Sprite**       | ![Player Sprite](assets/player_ship.svg) Represents the player ship.                                                                      | `assets/player_ship.svg`                        |
-| **State (Server)** | `id`, `color`, `x`, `y`, `lives`, `velocityX`, `velocityY`, `lastInputTime`, `input`, `lastShotTime`. Managed in `server.js` `players` object. | `server.js`                                     |
+| **Sprite**       | ![Player Sprite](../assets/player_ship.svg) Represents the player ship.                                                                      | `assets/player_ship.svg`                        |
+| **State (Server)** | `id`, `color`, `x`, `y`, `lives`, `isActive`, `isInvincible`, `invincibleUntil`, `velocityX`, `velocityY`, `lastInputTime`, `input`, `lastShotTime`. Managed in `server.js` `players` object. | `server.js`                                     |
 | **Rendering (Client)** | Sprite created/updated in `GameScene` based on server state. Remote players interpolated, local player position set directly. Color fallback for dark colors. | `src/player/Player.ts`, `src/scenes/GameScene.ts` |
-| **Input**        | Client (`InputManager`, `GameScene`) captures keyboard input and sends `input` message via `MultiplayerClient`.                            | `src/managers/InputManager.ts`, `src/scenes/GameScene.ts` |
-| **Movement**     | Server (`server.js`) updates `x`, `y` based on last received `input` state and `PLAYER_SPEED` (200). Client interpolates remote players.      | `server.js`, `src/scenes/GameScene.ts`          |
-| **Shooting**     | Client predicts bullet locally (`createLocalPredictedBullet`), sends details in `input` message. Server creates bullet authoritatively, applies cooldown (300ms). Bullet speed `BULLET_SPEED` (400). | `src/scenes/GameScene.ts`, `server.js`          |
-| **Collision**    | Server (`server.js`) detects collisions with enemy bullets and enemies, decrements `lives`. Client (`CollisionManager`) shows local effects. | `server.js`, `src/managers/CollisionManager.ts` |
+| **Input**        | Client (`InputManager`, `GameScene`) captures keyboard input. `GameScene` sends `input` message if player `isActive`. `InputManager` toggles local invincibility state on CTRL press; `GameScene` detects this change and sends `toggleInvincible` message to server if player `isActive`. | `src/managers/InputManager.ts`, `src/scenes/GameScene.ts` |
+| **Movement**     | Server (`server.js`) updates `x`, `y` for active players based on last received `input`. Client interpolates remote players. Input ignored for inactive players. | `server.js`, `src/scenes/GameScene.ts`          |
+| **Shooting**     | Client predicts bullet locally. `GameScene` sends details in `input` message if player `isActive`. Server creates bullet authoritatively if player `isActive`, applies cooldown (300ms). Input ignored for inactive players. | `src/scenes/GameScene.ts`, `server.js`          |
+| **Collision**    | Server (`server.js`) detects collisions. Checks `isInvincible` before decrementing `lives`. Updates `isActive` based on `lives`. Client (`CollisionManager`) shows local effects. | `server.js`, `src/managers/CollisionManager.ts` |
+| **Invincibility**| Triggered by CTRL key (client `InputManager`). Client `GameScene` sends `toggleInvincible` message to server. Server manages `isInvincible` state and timer (`invincibleUntil`). Server ignores damage if `isInvincible`. Client `GameScene` applies pulsating alpha tween when `isInvincible`. | `src/managers/InputManager.ts`, `src/scenes/GameScene.ts`, `server.js` |
+| **Defeat**       | When `lives` reaches 0, server sets `isActive` to false. Client (`GameScene`) hides the player sprite and shows "Waiting..." text if game is ongoing. Input is blocked. | `server.js`, `src/scenes/GameScene.ts`          |
 
 ### 4.2 Enemies
 
@@ -254,43 +265,43 @@ classDiagram
 
 | Feature          | Description                                                                                                                               | Location(s)                                     |
 | :--------------- | :---------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------- |
-| **Sprite**       | ![Normal Enemy Sprite](assets/enemy_ship.svg) Standard enemy ship.                                                                        | `assets/enemy_ship.svg`                         |
+| **Sprite**       | ![Normal Enemy Sprite](../assets/enemy_ship.svg) Standard enemy ship.                                                                        | `assets/enemy_ship.svg`                         |
 | **State (Server)** | `id`, `type: 1`, `x`, `y`, `active`, `visible`, `lastShotTime`. Managed by `EnemyWaveManagerCore` instance within `server.js`.             | `src/shared/EnemyWaveManagerCore.ts`, `server.js` |
 | **Spawning**     | Server (`EnemyWaveManagerCore`) spawns in a grid at wave start.                                                                           | `src/shared/EnemyWaveManagerCore.ts`            |
 | **Movement**     | Server (`EnemyWaveManagerCore`) updates `y` position downwards (speed 20). Client interpolates.                                           | `src/shared/EnemyWaveManagerCore.ts`, `src/scenes/GameScene.ts` |
-| **Shooting**     | Server (`server.js`) fires single downward bullet periodically (`ENEMY_SHOOT_INTERVAL` ~1500ms) if active and visible. Bullet speed `ENEMY_BULLET_SPEED` (200). | `server.js`                                     |
+| **Shooting**     | Server (`server.js`) fires single downward bullet periodically (`ENEMY_SHOOT_INTERVAL` ~1500ms) if active, visible, and the type-based cooldown (1 per type/sec) allows. Bullet speed `ENEMY_BULLET_SPEED` (200). | `server.js`                                     |
 | **Collision**    | Server (`server.js`) detects collisions with player bullets and player. Client (`CollisionManager`) shows local effects.                  | `server.js`, `src/managers/CollisionManager.ts` |
 
 #### 4.2.2 FalconEnemy (Type 2)
 
 | Feature          | Description                                                                                                                               | Location(s)                                     |
 | :--------------- | :---------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------- |
-| **Sprite**       | ![Falcon Enemy Sprite](assets/enemy_falcon.svg) Faster, spread-shot enemy.                                                                | `assets/enemy_falcon.svg`                       |
+| **Sprite**       | ![Falcon Enemy Sprite](../assets/enemy_falcon.svg) Faster, spread-shot enemy.                                                                | `assets/enemy_falcon.svg`                       |
 | **State (Server)** | `id`, `type: 2`, `x`, `y`, `active`, `visible`, `lastShotTime`. Managed by `EnemyWaveManagerCore` instance within `server.js`.             | `src/shared/EnemyWaveManagerCore.ts`, `server.js` |
 | **Spawning**     | Server (`EnemyWaveManagerCore`) spawns randomly (30% chance) in grid at wave start.                                                       | `src/shared/EnemyWaveManagerCore.ts`            |
 | **Movement**     | Server (`EnemyWaveManagerCore`) updates `y` position downwards (speed 20). Client interpolates.                                           | `src/shared/EnemyWaveManagerCore.ts`, `src/scenes/GameScene.ts` |
-| **Shooting**     | Server (`server.js`) fires two bullets in a spread periodically (`ENEMY_SHOOT_INTERVAL * 2` ~3000ms) if active and visible. Bullet speed `ENEMY_BULLET_SPEED * 1.5` (300). | `server.js`                                     |
+| **Shooting**     | Server (`server.js`) fires two bullets in a spread periodically (`ENEMY_SHOOT_INTERVAL * 2` ~3000ms) if active, visible, and the type-based cooldown (1 per type/sec) allows. Bullet speed `ENEMY_BULLET_SPEED * 1.5` (300). | `server.js`                                     |
 | **Collision**    | Server (`server.js`) detects collisions with player bullets and player. Client (`CollisionManager`) shows local effects.                  | `server.js`, `src/managers/CollisionManager.ts` |
 
 ### 4.3 Bullets (Player & Enemy)
 
 | Feature          | Description                                                                                                                               | Location(s)                                     |
 | :--------------- | :---------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------- |
-| **Sprite**       | ![Bullet Sprite](assets/bullet.svg) Projectile sprite.                                                                                    | `assets/bullet.svg`                             |
-| **State (Server)** | `id`, `ownerId`, `x`, `y`, `velocityX`, `velocityY`. Managed in `playerBullets` and `enemyBullets` arrays in `server.js`.                 | `server.js`                                     |
-| **Synchronization**| Player bullets: Client predicts, server reconciles using ID. Enemy bullets: Server authoritative, client reconciles using ID.             | `src/scenes/GameScene.ts`, `server.js`          |
+| **Sprite**       | ![Bullet Sprite](../assets/bullet.svg) Projectile sprite.                                                                                    | `assets/bullet.svg`                             |
+| **State (Server)** | `id`, `ownerId`, `x`, `y`, `velocityX`, `velocityY`. For enemy bullets, also includes `bulletType` ('normal' or 'falcon'). Managed in `playerBullets` and `enemyBullets` arrays in `server.js`. | `server.js`                                     |
+| **Synchronization**| Player bullets: Client predicts, server reconciles using ID. Enemy bullets: Server authoritative, client reconciles using ID. Client (`GameScene`) applies orange tint to sprites if `bulletType` is 'falcon'. | `src/scenes/GameScene.ts`, `server.js`          |
 | **Movement**     | Server (`server.js`) updates `x`, `y` based on velocity.                                                                                  | `server.js`                                     |
 | **Lifecycle**    | Server (`server.js`) removes bullets when out of bounds or after collision. Client removes sprites when ID disappears from server state.   | `server.js`, `src/scenes/GameScene.ts`          |
 
 ### 4.4 Collision Handling
 
 *   All primary collision detection (Player Bullet vs Enemy, Enemy Bullet vs Player, Enemy vs Player) is performed server-side in `server.js` using AABB checks.
-*   The server updates the authoritative state based on collisions (e.g., sets `enemy.active = false`, decrements `player.lives`).
-*   The client's `CollisionManager` uses Phaser's `overlap` checks primarily to trigger local visual effects (explosions via `showExplosion`) and potentially update local UI state (like lives display for immediate feedback, though the authoritative value comes from the server). It no longer sends `enemyHit` events.
+*   The server updates the authoritative state based on collisions (e.g., sets `enemy.active = false`, decrements `player.lives` only if not invincible, updates `player.isActive`).
+*   The client's `CollisionManager` uses Phaser's `overlap` checks primarily to trigger local visual effects (explosions via `showExplosion`) and update the local HUD lives display for immediate feedback. It no longer triggers the game over UI.
 
 ### 4.5 State Synchronization
 
-*   The server broadcasts the full authoritative state (`players`, `enemies`, `playerBullets`, `enemyBullets`, `waveNumber`) at ~60Hz.
+*   The server broadcasts the full authoritative state (`players` [including `isActive`, `isInvincible`], `enemies`, `playerBullets`, `enemyBullets` [including `bulletType`], `waveNumber`, `gameState`) at ~60Hz.
 *   Clients use ID-based reconciliation for players, enemies, and bullets:
     *   Existing objects are updated (position, visibility, etc.).
     *   New objects are created.
@@ -301,7 +312,8 @@ classDiagram
 ### 4.6 UI Components
 
 *   **`GameHUD`:** Displays current lives and wave number. Created once and updated by `GameScene` based on authoritative state from the server. Positioned lower on the screen (y=210).
-*   **`GameOverUI`:** Displays "GAME OVER" and "New Game" button when triggered (currently by `CollisionManager` based on local lives check). Clicking "New Game" sends `requestRestart` message to the server.
+*   **`GameOverUI`:** Displays "GAME OVER" and "New Game" button. Now shown by `GameScene` only when the server's `gameState` is 'gameOver'. Clicking "New Game" sends `requestRestart` message to the server.
+*   **Waiting Text:** A simple text element managed by `GameScene`, shown when the local player is inactive (`isActive: false`) but the overall `gameState` is still 'playing'.
 
 ### 4.7 Wave Progression
 
@@ -313,7 +325,7 @@ classDiagram
 ### 4.8 Game Start/Reset Flow
 
 *   **Start:** Server waits for the first player to connect and send a `ready` message before calling `enemyWaveManager.startWave(1)` and setting `gameStarted = true`.
-*   **Reset:** Client sends `requestRestart` message via `GameOverUI`. Server receives message, calls `resetGameState()` (resets player lives/pos, clears bullets, calls `enemyWaveManager.startWave(1)`), and broadcasts the reset state.
+*   **Reset:** Client sends `requestRestart` message via `GameOverUI`. Server receives message, calls `resetGameState()` (resets `gameState` to 'playing', player `lives`/`isActive`, clears bullets, calls `enemyWaveManager.startWave(1)`), and broadcasts the reset state.
 
 ## 5. Code Structure
 
@@ -336,9 +348,8 @@ classDiagram
 *   Client-side prediction for player bullets and interpolation for remote entities are in place.
 *   Server handles core game logic including collisions and wave progression.
 *   **Known Issues/Areas for Review:**
-    *   Client-side `CollisionManager` still updates local lives state; while the HUD uses server state, this could potentially lead to minor visual discrepancies before the next server update confirms the hit. Consider making collision effects purely visual triggers based on server state changes.
     *   Interpolation logic might require further tuning (`interpDuration`) for optimal smoothness under varying network conditions.
-    *   Falcon bullet rendering/synchronization (`falconBullets` group in `GameScene`) might need verification against the server-side logic and `enemyBullets` reconciliation. The `falconBullets` group doesn't seem to be populated or reconciled in the current `GameScene` code. Enemy bullets (including Falcon's) are handled via the `enemyBullets` group and `localEnemyBullets` map. The `falconBullets` group might be redundant.
+    *   The `falconBullets` group in `GameScene` appears redundant now that enemy bullets are reconciled centrally with type information. Consider removing it.
 
 ## 7. Appendices
 

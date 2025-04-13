@@ -37,6 +37,11 @@ export class GameScene extends Phaser.Scene {
   private _lastUpdateLog?: number;
   private localPlayerLastShotTime: number = 0;
   private localBullets: Map<string, Phaser.Physics.Arcade.Sprite> = new Map(); // Tracks client-side bullets by ID
+  private localPlayerInvincibleTween: Phaser.Tweens.Tween | null = null; // Tween for invincibility effect
+  private previousInvincibleKeyState: boolean = false; // Track previous state of the invincibility key/flag
+  private serverGameState: string = 'playing'; // Track overall game state from server
+  private localPlayerIsActive: boolean = true; // Track if the local player is active (lives > 0)
+  private waitingText: Phaser.GameObjects.Text | null = null; // Text shown when local player is defeated but game continues
   private _isFirstStateReceived: boolean = true; // Flag for initial state debugging
 
   // Managers/Components
@@ -76,6 +81,14 @@ export class GameScene extends Phaser.Scene {
       this.gameHUD = new GameHUD(this);
       this.gameOverUI = new GameOverUI(this);
 
+      // Initialize waiting text (hidden initially)
+      this.waitingText = this.add.text(
+        this.cameras.main.centerX,
+        this.cameras.main.centerY,
+        'Game is still in progress...\nWaiting for other players.',
+        { fontSize: '28px', color: '#ffffff', align: 'center', backgroundColor: 'rgba(0,0,0,0.7)', padding: { x: 20, y: 10 } }
+      ).setOrigin(0.5).setDepth(1001).setVisible(false);
+
       console.log('[GameScene] Connecting to multiplayer server...');
       this.players = {};
       this.multiplayerClient = new MultiplayerClient('ws://localhost:3001', {
@@ -98,6 +111,7 @@ export class GameScene extends Phaser.Scene {
           this.authoritativeState = msg;
           if (this.stateSendTimer) { clearInterval(this.stateSendTimer); this.stateSendTimer = null; }
           if (msg.waveNumber !== undefined) this.waveNumber = msg.waveNumber;
+          this.serverGameState = msg.gameState || 'playing'; // Update overall game state
 
           const now = Date.now(); // Use system time for state updates
 
@@ -167,7 +181,38 @@ export class GameScene extends Phaser.Scene {
                 // Common updates for both local and remote
                 this.players[id].setColor(p.color);
                 this.players[id].lives = p.lives;
-                sprite.visible = true;
+                this.players[id].isActive = p.isActive; // Update player active status
+                // Visibility is handled later based on localPlayerIsActive and serverGameState
+
+                // Update local player active status tracker
+                if (id === this.localPlayerId) {
+                  this.localPlayerIsActive = p.isActive;
+                }
+
+                // Handle Invincibility Visual Effect for Local Player
+                if (id === this.localPlayerId) {
+                  const wasInvincible = !!this.localPlayerInvincibleTween;
+                  const isNowInvincible = !!p.isInvincible; // Check the flag from server state
+
+                  if (isNowInvincible && !wasInvincible) {
+                    // Start tween
+                    console.log(`[GameScene] Player ${id} starting invincibility tween.`);
+                    this.localPlayerInvincibleTween = this.tweens.add({
+                      targets: sprite,
+                      alpha: { from: 0.5, to: 1 },
+                      duration: 150,
+                      ease: 'Linear',
+                      repeat: -1,
+                      yoyo: true
+                    });
+                  } else if (!isNowInvincible && wasInvincible) {
+                    // Stop tween
+                    console.log(`[GameScene] Player ${id} stopping invincibility tween.`);
+                    this.localPlayerInvincibleTween?.stop();
+                    this.localPlayerInvincibleTween = null;
+                    sprite.setAlpha(1.0); // Reset alpha
+                  }
+                }
               }
             }
             // Remove disconnected players
@@ -302,6 +347,13 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
         }
         localBullet.active = true;
         localBullet.visible = true;
+
+        // Apply tint based on bulletType
+        if (serverBullet.bulletType === 'falcon') {
+          localBullet.setTint(0xffa500); // Orange tint
+        } else {
+          localBullet.clearTint(); // Default appearance
+        }
       }
     } else {
       const newBullet = this.enemyBullets.create(serverBullet.x, serverBullet.y, 'bullet') as Phaser.Physics.Arcade.Sprite;
@@ -312,6 +364,13 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
         newBullet.active = true;
         newBullet.visible = true;
         this.localEnemyBullets.set(serverBullet.id, newBullet);
+
+        // Apply tint based on bulletType for new bullets
+        if (serverBullet.bulletType === 'falcon') {
+          newBullet.setTint(0xffa500); // Orange tint
+        } else {
+          newBullet.clearTint(); // Default appearance
+        }
       } else {
         console.warn(`[GameScene] Failed to create server enemy bullet sprite: ${serverBullet.id}`);
       }
@@ -327,6 +386,29 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
   });
 }
 // --- End Enemy Bullet Reconciliation ---
+
+  // --- Handle Player Visibility, Waiting Text, and Game Over UI ---
+  const localPlayerSprite = this.localPlayerId ? this.players[this.localPlayerId]?.sprite : null;
+  if (localPlayerSprite) {
+      localPlayerSprite.setVisible(this.localPlayerIsActive); // Show/hide local player based on active status
+  }
+  this.waitingText?.setVisible(!this.localPlayerIsActive && this.serverGameState === 'playing'); // Show waiting text if local player inactive but game ongoing
+
+  if (this.serverGameState === 'gameOver' && this.gameOverUI) {
+      if (!this.gameOverUI.isVisible()) { // Only show if not already visible
+          this.gameOverUI.show(() => {
+              if (this.multiplayerClient) {
+                  this.multiplayerClient.send({ type: 'requestRestart' });
+              }
+              this.isGameOver = false; // Reset local flag (though server state is king)
+              this.waitingText?.setVisible(false); // Ensure waiting text is hidden on restart request
+          });
+      }
+  } else if (this.gameOverUI) {
+      this.gameOverUI.hide(); // Hide if game state is not 'gameOver'
+  }
+
+
   // --- HUD Initialization and Updates ---
   if (this.gameHUD) {
     // Find the local player in the authoritative state
@@ -334,7 +416,7 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
     if (this.localPlayerId && msg.players && msg.players[this.localPlayerId]) {
       currentPlayer = msg.players[this.localPlayerId];
     }
-    // Initialize HUD if not already created (assume create() sets a flag or check for a property)
+    // Initialize HUD if not already created
     if (currentPlayer && (!this.gameHUD._created || typeof this.gameHUD._created === "undefined")) {
       this.gameHUD.create(currentPlayer.lives, msg.waveNumber);
       this.gameHUD._created = true;
@@ -347,7 +429,7 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
       this.gameHUD.updateWave(msg.waveNumber);
     }
   }
-        } // End onAuthoritativeState
+ } // End onAuthoritativeState
       }); // End multiplayerClient constructor call
       console.log('[GameScene] create finished');
   } // End create()
@@ -431,44 +513,58 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
         }
     });
 
-    // --- Handle Local Input & Send to Server ---
-    if (this.inputManager && this.localPlayerId) {
-      const cursors = this.inputManager.getCursorKeys();
-      const isFireDown = this.inputManager.isFireDown();
-      const localPlayer = this.players[this.localPlayerId];
+    // --- Handle Local Input & Send to Server (Only if local player is active) ---
+    if (this.inputManager && this.localPlayerId && this.localPlayerIsActive) {
+        const cursors = this.inputManager.getCursorKeys();
+        const isFireDown = this.inputManager.isFireDown();
+        const localPlayer = this.players[this.localPlayerId];
 
-      const inputState = {
-        left: cursors.left?.isDown || false,
-        right: cursors.right?.isDown || false,
-        up: cursors.up?.isDown || false,
-        down: cursors.down?.isDown || false,
-        fire: isFireDown
-      };
+        const inputState = {
+            left: cursors.left?.isDown || false,
+            right: cursors.right?.isDown || false,
+            up: cursors.up?.isDown || false,
+            down: cursors.down?.isDown || false,
+            fire: isFireDown
+        };
 
-      let newBulletInfo: { id: string; x: number; y: number; velocityY: number } | undefined = undefined;
+        let newBulletInfo: { id: string; x: number; y: number; velocityY: number } | undefined = undefined;
 
-      if (localPlayer && isFireDown) {
-        const now = time; // Use Phaser time for bullet ID generation consistency if needed
-        const shotInterval = 300;
-        if (!this.localPlayerLastShotTime || now - this.localPlayerLastShotTime > shotInterval) {
-          const bulletId = `${this.localPlayerId}-${now}`;
-          const bulletX = localPlayer.sprite.x;
-          const bulletY = localPlayer.sprite.y - 20;
-          const bulletVelocityY = -400;
-          newBulletInfo = { id: bulletId, x: bulletX, y: bulletY, velocityY: bulletVelocityY };
-          this.createLocalPredictedBullet(bulletId, bulletX, bulletY, bulletVelocityY); // Predict locally
-          this.localPlayerLastShotTime = now;
+        // Handle firing prediction
+        if (localPlayer && isFireDown) {
+            const now = time;
+            const shotInterval = 300;
+            if (!this.localPlayerLastShotTime || now - this.localPlayerLastShotTime > shotInterval) {
+                const bulletId = `${this.localPlayerId}-${now}`;
+                const bulletX = localPlayer.sprite.x;
+                const bulletY = localPlayer.sprite.y - 20;
+                const bulletVelocityY = -400;
+                newBulletInfo = { id: bulletId, x: bulletX, y: bulletY, velocityY: bulletVelocityY };
+                this.createLocalPredictedBullet(bulletId, bulletX, bulletY, bulletVelocityY);
+                this.localPlayerLastShotTime = now;
+            }
         }
-      }
 
-      if (this.multiplayerClient) {
-          this.multiplayerClient.sendInput({ ...inputState, newBullet: newBulletInfo });
-      }
+        // Send movement and firing input
+        if (this.multiplayerClient) {
+            this.multiplayerClient.sendInput({ ...inputState, newBullet: newBulletInfo });
+        }
 
-      // --- Apply Local Player Movement Prediction ---
-      if (localPlayer && typeof localPlayer.move === 'function') {
-         // localPlayer.move(cursors); // Keep removed - Rely solely on server state + interpolation
-      }
+        // Check for invincibility toggle input (CTRL key)
+        const currentInvincibleKeyState = this.inputManager.isInvincible();
+        if (currentInvincibleKeyState && !this.previousInvincibleKeyState) {
+            // State changed from false to true (CTRL was just pressed)
+            console.log("[GameScene] Invincibility toggled ON locally (CTRL). Sending toggle request to server.");
+            this.multiplayerClient.send({ type: 'toggleInvincible' });
+        }
+        // Update previous state for next frame check
+        this.previousInvincibleKeyState = currentInvincibleKeyState;
+
+    } else if (this.inputManager && this.localPlayerId && !this.localPlayerIsActive) {
+        // Player is inactive, ensure input state sent to server reflects this (no movement/firing)
+        // Check if we need to send a final "neutral" input state or if server handles lack of input correctly.
+        // For now, we just don't send any input if inactive.
+        // Also reset the invincibility key state tracker if player becomes inactive
+        this.previousInvincibleKeyState = false;
     }
 
     // --- Local Bullet Simulation (Prediction & Server-Created) ---
@@ -562,18 +658,9 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
         () => this.players[localId]?.lives ?? 0,
         (lives: number) => { if (this.players[localId]) this.players[localId].lives = lives; },
         () => this.isGameOver ?? false,
-        (over: boolean) => { this.isGameOver = over; },
-        () => {
-            this.gameOverUI.show(() => {
-                // Send restart request to server when "New Game" is clicked
-                if (this.multiplayerClient) {
-                    this.multiplayerClient.send({ type: 'requestRestart' });
-                }
-                // Optionally, reset some local state immediately if needed,
-                // but authoritative state reset comes from server.
-                this.isGameOver = false; // Reset local game over flag
-            });
-        },
+        (over: boolean) => { this.isGameOver = over; }
+        // Removed the gameOverHandler argument as it's no longer needed in CollisionManager
+        // () => { ... } // This was the gameOverHandler
         // Removed onEnemyDestroyed callback - server handles destruction
       );
 

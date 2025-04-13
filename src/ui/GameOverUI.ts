@@ -40,4 +40,9 @@ export class GameOverUI {
       this.newGameButton = undefined;
     }
   }
+
+  isVisible(): boolean {
+    // If the text object exists, the UI is considered visible
+    return !!this.gameOverText;
+  }
 }

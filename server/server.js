@@ -26,10 +26,12 @@ let playerBullets = []; // { id, x, y, velocityY, ownerId }
 let enemyBullets = []; // { id, x, y, velocityX, velocityY, ownerId: 'enemy_<id>' }
 let usedColors = new Set();
 const enemyWaveManager = new EnemyWaveManagerCore();
+let lastFireTimePerType = {}; // Tracks the last time an enemy of a specific type fired
 /*
 // enemyWaveManager.startWave(1); // Start with wave 1
 */
 let gameStarted = false;
+let overallGameState = 'playing'; // 'playing' or 'gameOver'
 
 // Game simulation parameters
 const PLAYER_SPEED = 200;
@@ -68,9 +70,11 @@ function gatherCurrentState() {
   const state = {
     players: {},
     playerBullets: playerBullets.map(b => ({ x: b.x, y: b.y, velocityY: b.velocityY, id: b.id, ownerId: b.ownerId })),
-    enemyBullets: enemyBullets.map(b => ({ x: b.x, y: b.y, velocityX: b.velocityX, velocityY: b.velocityY, id: b.id, ownerId: b.ownerId })),
+    // Include bulletType for enemy bullets
+    enemyBullets: enemyBullets.map(b => ({ x: b.x, y: b.y, velocityX: b.velocityX, velocityY: b.velocityY, id: b.id, ownerId: b.ownerId, bulletType: b.bulletType })),
     enemies: enemyWaveManager.getEnemies(),
     waveNumber: enemyWaveManager.getWaveNumber(),
+    gameState: overallGameState, // Include overall game state
   };
   for (const id in players) {
     state.players[id] = {
@@ -79,6 +83,8 @@ function gatherCurrentState() {
       x: players[id].x,
       y: players[id].y,
       lives: players[id].lives,
+      isInvincible: players[id].isInvincible || false, // Include invincibility status
+      isActive: players[id].isActive, // Include active status
     };
   }
   return state;
@@ -107,7 +113,9 @@ function resetGameState() {
     players[id].velocityY = 0;
     players[id].input = { left: false, right: false, up: false, down: false, fire: false };
     delete players[id].lastShotTime; // Reset shot cooldown
+    players[id].isActive = true; // Reset active status
   }
+  overallGameState = 'playing'; // Reset overall game state
   // Clear bullets
   playerBullets = [];
   enemyBullets = [];
@@ -135,7 +143,10 @@ wss.on('connection', function connection(ws) {
     velocityX: 0,
     velocityY: 0,
     lastInputTime: Date.now(),
-    input: { left: false, right: false, up: false, down: false, fire: false } // Store last known input state
+    input: { left: false, right: false, up: false, down: false, fire: false }, // Store last known input state
+    isInvincible: false, // Add invincibility state
+    invincibleUntil: 0,  // Timestamp until invincibility lasts
+    isActive: true       // Add active status
   };
 
   // No longer need to assign main player
@@ -162,8 +173,9 @@ wss.on('connection', function connection(ws) {
     }
 
     // Handle player input
-    if (data.type === 'input' && players[id]) {
-      // console.log('[Server] Received input from player', id, data); // Reduce logging noise
+    // Process input only if player exists and is active
+    if (data.type === 'input' && players[id] && players[id].isActive) {
+      // console.log('[Server] Received input from active player', id, data); // Reduce logging noise
       // Store the latest input state for this player
       players[id].input = {
         left: !!data.left,
@@ -175,7 +187,6 @@ wss.on('connection', function connection(ws) {
       players[id].lastInputTime = Date.now(); // Track when input was received
 
       // Handle firing immediately based on input
-      // Handle firing based on input, using client-provided details if available
       if (data.fire) {
         const now = Date.now();
         // Use server-side cooldown check as the authority
@@ -188,11 +199,11 @@ wss.on('connection', function connection(ws) {
             bulletX = data.newBulletX;
             bulletY = data.newBulletY;
             bulletVelocityY = data.newBulletVelocityY;
-            console.log(`[Server] Player ${id} firing confirmed bullet ${bulletId}`);
+            // console.log(`[Server] Player ${id} firing confirmed bullet ${bulletId}`); // Reduce noise
           } else {
-            // Fallback if client didn't send bullet details (should not happen with updated client)
-            console.warn(`[Server] Player ${id} fired but newBullet details missing in input. Generating fallback.`);
-            bulletId = uuidv4(); // Generate server-side ID as fallback
+            // Fallback if client didn't send bullet details
+            console.warn(`[Server] Player ${id} fired but newBullet details missing. Generating fallback.`);
+            bulletId = uuidv4();
             bulletX = players[id].x;
             bulletY = players[id].y - 20;
             bulletVelocityY = -BULLET_SPEED;
@@ -208,6 +219,9 @@ wss.on('connection', function connection(ws) {
           players[id].lastShotTime = now; // Update cooldown server-side
         }
       }
+    } else if (data.type === 'input' && players[id] && !players[id].isActive) {
+      // Optionally log ignored input from inactive player
+      // console.log(`[Server] Ignored input from inactive player ${id}`);
     }
     // Removed enemyHit handler - collision is now server-authoritative
 
@@ -215,6 +229,20 @@ wss.on('connection', function connection(ws) {
     if (data.type === 'requestRestart') {
       console.log(`[Server] Received requestRestart from player ${id}`);
       resetGameState();
+    }
+
+    // Handle invincibility toggle request only if player exists and is active
+    if (data.type === 'toggleInvincible' && players[id] && players[id].isActive) {
+      const now = Date.now();
+      // Allow toggling only if not currently invincible
+      if (!players[id].isInvincible) {
+        console.log(`[Server] Player ${id} activated invincibility.`);
+        players[id].isInvincible = true;
+        players[id].invincibleUntil = now + 5000; // 5 seconds duration
+      }
+      // Note: We don't handle toggling *off* via message here, only expiration or reset
+    } else if (data.type === 'toggleInvincible' && players[id] && !players[id].isActive) {
+       // console.log(`[Server] Ignored invincibility toggle from inactive player ${id}`);
     }
   });
 
@@ -256,6 +284,14 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
     player.y = Math.max(0, Math.min(GAME_HEIGHT, player.y));
   }
 
+  // Check for invincibility expiration
+  for (const id in players) {
+    if (players[id].isInvincible && now > players[id].invincibleUntil) {
+      players[id].isInvincible = false;
+      console.log(`[Server] Player ${id} invincibility expired.`);
+    }
+  }
+
   // Update player bullet positions
   const remainingBullets = [];
   for (const bullet of playerBullets) {
@@ -283,7 +319,11 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
     // Determine shoot interval based on type (Falcons shoot less often)
     const shootInterval = enemy.type === 2 ? ENEMY_SHOOT_INTERVAL * 2 : ENEMY_SHOOT_INTERVAL;
 
-    if (now - enemy.lastShotTime > shootInterval + Math.random() * 1000) {
+    // Check type-based cooldown first (1 second)
+    const typeCooldownReady = now - (lastFireTimePerType[enemy.type] || 0) > 1000;
+
+    if (typeCooldownReady && now - enemy.lastShotTime > shootInterval + Math.random() * 1000) {
+      let fired = false; // Flag to track if this enemy fired in this tick
       if (enemy.type === 1) { // Normal Enemy
         newEnemyBullets.push({
           id: `enemy_bullet_${enemy.id}_${now}`,
@@ -291,8 +331,10 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
           x: enemy.x,
           y: enemy.y + 20,
           velocityX: 0,
-          velocityY: ENEMY_BULLET_SPEED
+          velocityY: ENEMY_BULLET_SPEED,
+          bulletType: 'normal' // Add bullet type
         });
+        fired = true;
       } else if (enemy.type === 2) { // Falcon Enemy
         const speed = ENEMY_BULLET_SPEED * 1.5; // Falcons shoot faster
         const spread = 12.5; // degrees from vertical
@@ -308,11 +350,17 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
             x: enemy.x,
             y: enemy.y + 20,
             velocityX: vx,
-            velocityY: vy
+            velocityY: vy,
+            bulletType: 'falcon' // Add bullet type
           });
         });
+        fired = true;
       }
-      enemy.lastShotTime = now;
+
+      if (fired) {
+        enemy.lastShotTime = now; // Update individual cooldown
+        lastFireTimePerType[enemy.type] = now; // Update type-based cooldown
+      }
     }
   }
   enemyBullets.push(...newEnemyBullets);
@@ -379,9 +427,15 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
           player.x - playerWidth / 2, player.y - playerHeight / 2, playerWidth, playerHeight
         )
       ) {
-        player.lives = Math.max(0, player.lives - 1);
-        bullet._remove = true;
-        // Optionally: respawn player, set invincibility, etc.
+        // Apply damage only if player is not invincible
+        if (!player.isInvincible) {
+          player.lives = Math.max(0, player.lives - 1);
+          player.isActive = player.lives > 0; // Update active status immediately
+          console.log(`[Server] Player ${id} hit by bullet ${bullet.id}. Lives left: ${player.lives}. Active: ${player.isActive}`);
+        } else {
+          console.log(`[Server] Player ${id} invincible, blocked bullet ${bullet.id}`);
+        }
+        bullet._remove = true; // Remove bullet regardless of invincibility
       }
     }
   }
@@ -402,8 +456,25 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
           player.x - playerWidth / 2, player.y - playerHeight / 2, playerWidth, playerHeight
         )
       ) {
-        player.lives = Math.max(0, player.lives - 1);
-        // Optionally: respawn player, set invincibility, etc.
+        // Apply damage only if player is not invincible
+        if (!player.isInvincible) {
+          player.lives = Math.max(0, player.lives - 1);
+          player.isActive = player.lives > 0; // Update active status immediately
+          console.log(`[Server] Player ${id} collided with enemy ${enemy.id}. Lives left: ${player.lives}. Active: ${player.isActive}`);
+          // Note: Enemy is not destroyed by player collision
+        } else {
+           console.log(`[Server] Player ${id} invincible, blocked collision with enemy ${enemy.id}`);
+        }
+      }
+    
+      // --- Check for Game Over Condition ---
+      if (overallGameState === 'playing') {
+        const activePlayers = Object.values(players).filter(p => p.isActive);
+        if (activePlayers.length === 0 && Object.keys(players).length > 0) {
+          console.log("[Server] All players inactive. Setting game state to gameOver.");
+          overallGameState = 'gameOver';
+          // Optionally: Stop enemy spawning/movement? Depends on desired game over behavior.
+        }
       }
     }
   }

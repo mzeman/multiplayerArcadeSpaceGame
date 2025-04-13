@@ -15,7 +15,7 @@ export class CollisionManager {
   private setLives: (lives: number) => void;
   private getGameOver: () => boolean;
   private setGameOver: (over: boolean) => void;
-  private gameOverHandler: () => void;
+  // private gameOverHandler: () => void; // Removed: GameScene handles UI based on server state
   // private onEnemyDestroyed?: (enemyId: string) => void; // Removed: Server is authoritative
 
   constructor(
@@ -27,8 +27,8 @@ export class CollisionManager {
     getLives: () => number,
     setLives: (lives: number) => void,
     getGameOver: () => boolean,
-    setGameOver: (over: boolean) => void,
-    gameOverHandler: () => void,
+    setGameOver: (over: boolean) => void
+    // gameOverHandler: () => void, // Removed
     // onEnemyDestroyed?: (enemyId: string) => void // Removed: Server is authoritative
   ) {
     this.scene = scene;
@@ -40,7 +40,7 @@ export class CollisionManager {
     this.setLives = setLives;
     this.getGameOver = getGameOver;
     this.setGameOver = setGameOver;
-    this.gameOverHandler = gameOverHandler;
+    // this.gameOverHandler = gameOverHandler; // Removed
     // this.onEnemyDestroyed = onEnemyDestroyed; // Removed: Server is authoritative
   }
 
@@ -87,10 +87,13 @@ export class CollisionManager {
       lives = Math.max(0, lives);
       this.setLives(lives);
     }
-    this.gameHUD.updateLives(lives);
+    this.gameHUD.updateLives(lives); // Update HUD for immediate feedback
+    // Removed: GameScene handles game over UI based on server state
+    /*
     if (lives <= 0) {
-      this.gameOverHandler();
+      // this.gameOverHandler(); // Removed
     }
+    */
   };
 
   handleFalconBulletPlayerCollision = (
@@ -113,10 +116,13 @@ export class CollisionManager {
       lives = Math.max(0, lives);
       this.setLives(lives);
     }
-    this.gameHUD.updateLives(lives);
+    this.gameHUD.updateLives(lives); // Update HUD for immediate feedback
+    // Removed: GameScene handles game over UI based on server state
+    /*
     if (lives <= 0) {
-      this.gameOverHandler();
+      // this.gameOverHandler(); // Removed
     }
+    */
   };
 
   handlePlayerEnemyCollision = (
@@ -143,10 +149,13 @@ export class CollisionManager {
         lives = Math.max(0, lives);
         this.setLives(lives);
       }
-      this.gameHUD.updateLives(lives);
+      this.gameHUD.updateLives(lives); // Update HUD for immediate feedback
+      // Removed: GameScene handles game over UI based on server state
+      /*
       if (lives <= 0) {
-        this.gameOverHandler();
+        // this.gameOverHandler(); // Removed
       }
+      */
     }
   };
 }

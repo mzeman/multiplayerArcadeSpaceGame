@@ -15,6 +15,7 @@ export class Player {
   lives: number;
   color: string;
   lastShotTime: number = 0;
+  public isActive: boolean = true; // Added to track player status based on server state
 
   constructor(
     scene: Phaser.Scene,
