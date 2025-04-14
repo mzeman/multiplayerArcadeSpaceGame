@@ -1,58 +1,58 @@
 import Phaser from 'phaser';
-import { showExplosion } from '../effects/effects';
+import { logger } from '@shared/logger'; // Import logger
+// Removed showExplosion import, effects handled elsewhere
 
 export abstract class Enemy {
-  sprite: Phaser.Physics.Arcade.Image;
-  scene: Phaser.Scene;
-  type: number;
+  public sprite: Phaser.Physics.Arcade.Sprite; // Changed to Sprite
+  protected scene: Phaser.Scene;
+  public type: number; // Keep type for potential client-side distinctions
+
+  // Properties for interpolation
+  protected targetX: number;
+  protected targetY: number;
+  protected interpolationFactor: number = 0.2; // Default, can be overridden
 
   constructor(scene: Phaser.Scene, x: number, y: number, texture: string, type: number) {
     this.scene = scene;
     this.type = type;
-    this.sprite = scene.physics.add.image(x, y, texture);
-    this.sprite.setDisplaySize(40, 40);
+    this.sprite = scene.physics.add.sprite(x, y, texture); // Use add.sprite
+    this.targetX = x; // Initialize target position
+    this.targetY = y;
+    // Scale can be set in subclasses or manager if needed, e.g., this.sprite.setScale(0.8);
+    // setDisplaySize might conflict with setScale, prefer setScale.
     this.sprite.setDepth(1);
     if (this.sprite.body) {
       (this.sprite.body as Phaser.Physics.Arcade.Body).allowGravity = false;
     }
   }
-/**
- * Updates the enemy's position and destroys it if it goes off screen.
- * @param delta The time delta.
- * @param sceneHeight The height of the game scene.
- * @param speed The speed at which the enemy moves down.
- */
-update(delta: number, sceneHeight: number, speed: number = 40) {
-  // Client-side movement logic removed. Position is set by server state + interpolation in GameScene.
-  // if (this.sprite && this.sprite.active) {
-  //   // Move enemy downward each frame
-  //   // this.sprite.y += speed * (delta / 1000); // Server handles position
-  //   // if (this.sprite.y > sceneHeight) {
-  //   //   this.sprite.destroy(); // Server handles destruction
-  //   // }
-  // }
-}
+  // Removed client-side update method
+  // Removed client-side state: lastShotTime, shotInterval
 
-  public lastShotTime: number = 0;
-  public shotInterval: number = 500; // Default 500ms
+  // Removed takeDamage - effects handled elsewhere based on server state changes
+  // Removed abstract fire method - server handles firing
 
-  takeDamage(bullet: Phaser.GameObjects.GameObject, size?: string) {
-    if (this.sprite && this.sprite.scene) {
-      if ('disableBody' in bullet && typeof bullet['disableBody'] === 'function') {
-        (bullet as any).disableBody(true, true);
-      } else {
-        bullet.destroy();
-      }
+  // --- Methods for ClientEnemyManager ---
 
-      if ('disableBody' in this.sprite && typeof this.sprite['disableBody'] === 'function' && 'scene' in this.sprite) {
-        showExplosion(this.sprite.scene, this.sprite.x, this.sprite.y, size === "large" ? "large" : "small");
-        (this.sprite as any).disableBody(true, true);
-        (this.sprite as any).active = false;
-      } else {
-        this.sprite.destroy();
-      }
-    }
+  /** Stores the target position received from the server for interpolation. */
+  setTargetPosition(x: number, y: number): void {
+    this.targetX = x;
+    this.targetY = y;
   }
 
-  abstract fire(bulletsGroup: Phaser.GameObjects.Group, time: number): void;
+  /** Smoothly interpolates the sprite's position towards the target position. */
+  interpolatePosition(delta: number): void {
+    if (!this.sprite) return;
+    const newX = Phaser.Math.Linear(this.sprite.x, this.targetX, this.interpolationFactor);
+    const newY = Phaser.Math.Linear(this.sprite.y, this.targetY, this.interpolationFactor);
+    this.sprite.setPosition(newX, newY);
+  }
+
+  /** Destroys the enemy sprite. */
+  destroy(): void {
+    if (this.sprite) {
+      logger.debug(`Destroying enemy sprite (Type: ${this.type})`);
+      this.sprite.destroy();
+      // this.sprite = null; // Optional: Nullify reference
+    }
+  }
 }

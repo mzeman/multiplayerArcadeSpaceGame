@@ -1,19 +1,23 @@
 import Phaser from 'phaser';
+import { logger } from '@shared/logger'; // Import logger
 
 export class InputManager {
   private scene: Phaser.Scene;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private fireKey!: Phaser.Input.Keyboard.Key;
   private leftCtrlKey!: Phaser.Input.Keyboard.Key;
-  private _isInvincible: boolean = false;
+  // Removed local _isInvincible state
 
-  constructor(scene: Phaser.Scene) {
+  private onToggleInvincibleRequest: () => void; // Callback for CTRL press
+
+  constructor(scene: Phaser.Scene, onToggleInvincibleRequest: () => void) {
     this.scene = scene;
+    this.onToggleInvincibleRequest = onToggleInvincibleRequest;
   }
 
   create() {
     if (!this.scene.input || !this.scene.input.keyboard) {
-      console.error("Keyboard input not available in this scene.");
+      logger.error("Keyboard input not available in this scene.");
       return;
     }
     this.cursors = this.scene.input.keyboard.createCursorKeys();
@@ -21,9 +25,10 @@ export class InputManager {
     this.leftCtrlKey = this.scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.CTRL);
 
     // Toggle invincibility on Ctrl press
+    // Call the callback on Ctrl press instead of setting local state
     this.leftCtrlKey.on('down', () => {
-      this._isInvincible = !this._isInvincible;
-      console.log(`[DEBUG] Invincibility toggled: ${this._isInvincible}`);
+      logger.debug("CTRL key pressed, requesting invincibility toggle.");
+      this.onToggleInvincibleRequest();
     });
   }
 
@@ -35,13 +40,12 @@ export class InputManager {
     return this.fireKey && this.fireKey.isDown;
   }
 
-  isInvincible(): boolean {
-    return this._isInvincible;
-  }
+  // Removed isInvincible getter
 
   // Optional: Method to reset state if needed on restart
   reset() {
-    this._isInvincible = false;
+    // No local state to reset related to invincibility anymore
     // Note: Key listeners might need to be removed and re-added if scene restarts cause issues
+    logger.debug("InputManager reset called (no state to reset).");
   }
 }

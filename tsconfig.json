@@ -10,7 +10,11 @@
     "allowJs": false,
     "checkJs": false,
     "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".", // Base directory for path mapping (project root)
+    "paths": {
+      "@shared/*": ["src/shared/*"] // Map @shared/* to src/shared/*
+    }
   },
   "include": ["src/**/*"]
 }

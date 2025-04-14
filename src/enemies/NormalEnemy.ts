@@ -4,9 +4,10 @@ import { Enemy } from './Enemy';
 export class NormalEnemy extends Enemy {
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, 'enemyShip', 1);
-    this.shotInterval = Phaser.Math.Between(1000, 1000);
+    this.sprite.setScale(0.25); // Set scaling to 0.25
+    this.sprite.refreshBody(); // Update physics body size to match scale
+    // Removed client-side shotInterval property
   }
 
-  // Enemy firing is now server-authoritative; this method is intentionally left blank.
-  fire(bulletsGroup: Phaser.GameObjects.Group, time: number) {}
+  // Removed empty fire method override
 }

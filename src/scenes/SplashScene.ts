@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { logger } from '@shared/logger'; // Import logger
 
 export class SplashScene extends Phaser.Scene {
   constructor() {
@@ -10,7 +11,7 @@ export class SplashScene extends Phaser.Scene {
   }
 
   create() {
-      console.log('[SplashScene] create');
+      logger.info('[SplashScene] create'); // Use logger
       const { width, height } = this.scale;
       const splashText = this.add.text(
         width / 2,
@@ -22,7 +23,7 @@ export class SplashScene extends Phaser.Scene {
       this.cameras.main.setBackgroundColor('#000');
   
       this.time.delayedCall(3000, () => {
-        console.log('[SplashScene] Transitioning to GameScene');
+        logger.info('[SplashScene] Transitioning to GameScene'); // Use logger
         splashText.destroy();
         this.scene.start('GameScene');
       });

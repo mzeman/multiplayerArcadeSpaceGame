@@ -1,6 +1,7 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const webpack = require('webpack'); // Import webpack for DefinePlugin
 
 module.exports = {
   entry: './src/index.ts',
@@ -11,6 +12,10 @@ module.exports = {
   },
   resolve: {
     extensions: ['.ts', '.js'],
+    alias: {
+      // Add alias for the shared directory
+      '@shared': path.resolve(__dirname, 'src/shared')
+    }
   },
   module: {
     rules: [
@@ -30,6 +35,10 @@ module.exports = {
       patterns: [
         { from: 'assets', to: 'assets' }
       ]
+    }),
+    // Define environment variables for client-side code
+    new webpack.DefinePlugin({
+      'process.env.LOG_LEVEL': JSON.stringify('debug') // Set client log level to debug
     }),
   ],
   devtool: 'source-map',

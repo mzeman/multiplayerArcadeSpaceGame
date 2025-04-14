@@ -2,148 +2,127 @@
  * MultiplayerClient handles WebSocket communication with the multiplayer server.
  */
 
-export type PlayerState = {
-  id: string;
-  color: string;
-  x: number;
-  y: number;
-  lives: number;
-};
-
-type GameState = {
-  type: 'game_state';
-  players: { [id: string]: PlayerState };
-};
-
-type WelcomeMsg = {
-  type: 'welcome';
-  id: string;
-  color: string;
-};
-
-type AuthoritativeStateMsg = {
-  type: 'authoritative_state';
-  // ...arbitrary state fields (enemies, bullets, wave, etc.)
-  [key: string]: any;
-};
-
-type MainPlayerMsg = {
-  type: 'main_player';
-};
-
-type ServerMsg = GameState | WelcomeMsg | AuthoritativeStateMsg | MainPlayerMsg;
-
-// Represents the state of player inputs sent to the server
-// Represents the state of player inputs sent to the server
-type InputMsg = {
-  type: 'input';
-  left: boolean;
-  right: boolean;
-  up: boolean;
-  down: boolean;
-  fire: boolean; // Indicates fire button pressed this frame
-  playerId?: string; // Optional: Server might infer from connection
-
-  // Optional fields for when 'fire' is true and a bullet is created client-side
-  newBulletId?: string;
-  newBulletX?: number;
-  newBulletY?: number;
-  newBulletVelocityY?: number;
-};
+// Import shared types
+import {
+    PlayerId,
+    AuthoritativeState,
+    WelcomePayload,
+    InputPayload
+} from '@shared/types';
+import { logger } from '@shared/logger'; // Import logger
 
 export class MultiplayerClient {
   private ws: WebSocket;
-  public playerId: string | null = null;
+  public playerId: PlayerId | null = null; // Use shared PlayerId
   public playerColor: string | null = null;
-  public players: { [id: string]: PlayerState } = {};
-  public isMainPlayer: boolean = false;
-  public onGameState: ((state: GameState) => void) | null = null;
-  public onWelcome: ((msg: WelcomeMsg) => void) | null = null;
-  public onMainPlayer: (() => void) | null = null;
-  public onAuthoritativeState: ((state: AuthoritativeStateMsg) => void) | null = null;
+
+  // Callbacks
+  public onWelcome: ((payload: WelcomePayload) => void) | null = null; // Use shared WelcomePayload
+  public onAuthoritativeState: ((state: AuthoritativeState) => void) | null = null; // Use shared AuthoritativeState
+
+  // Buffering logic
+  private isReady: boolean = false; // Flag to indicate if GameScene is ready
+  private messageBuffer: string[] = []; // Buffer for messages received before ready
 
   constructor(
     serverUrl: string,
     opts: {
-      onWelcome?: (msg: WelcomeMsg) => void,
-      onGameState?: (state: GameState) => void,
-      onMainPlayer?: () => void,
-      onAuthoritativeState?: (state: AuthoritativeStateMsg) => void,
+      onWelcome?: (payload: WelcomePayload) => void, // Use shared type
+      onAuthoritativeState?: (state: AuthoritativeState) => void, // Use shared type
     } = {}
   ) {
     this.onWelcome = opts.onWelcome || null;
-    this.onGameState = opts.onGameState || null;
-    this.onMainPlayer = opts.onMainPlayer || null;
     this.onAuthoritativeState = opts.onAuthoritativeState || null;
 
     this.ws = new WebSocket(serverUrl);
 
-    this.ws.onmessage = (event) => {
-      const msg: ServerMsg = JSON.parse(event.data);
-      if (msg.type === 'welcome') {
-        this.playerId = msg.id;
-        this.playerColor = msg.color;
-        if (this.onWelcome) this.onWelcome(msg);
-      } else if (msg.type === 'game_state') {
-        this.players = msg.players;
-        if (this.onGameState) this.onGameState(msg);
-      } else if (msg.type === 'main_player') {
-        this.isMainPlayer = true;
-        if (this.onMainPlayer) this.onMainPlayer();
-      } else if (msg.type === 'authoritative_state') {
-        if (this.onAuthoritativeState) this.onAuthoritativeState(msg);
-      }
+    this.ws.onopen = () => {
+        logger.info("WebSocket connection established.");
+    };
+
+    this.ws.onerror = (event) => {
+        logger.error("WebSocket error:", event);
+    };
+
+    this.ws.onclose = (event) => {
+        logger.info(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`);
+        this.isReady = false; // Reset ready state on close
+    };
+
+    this.ws.onmessage = (event: MessageEvent) => {
+        const rawData = event.data as string;
+        if (this.isReady) {
+            // If ready, process immediately
+            this._processMessage(rawData);
+        } else {
+            // If not ready, buffer the raw message data
+            logger.debug("Client not ready, buffering message.");
+            this.messageBuffer.push(rawData);
+        }
     };
   }
 
+  /** Signals that the client (GameScene) is ready to process messages. */
+  public signalReady(): void {
+      logger.info("MultiplayerClient signaled ready. Processing buffered messages...");
+      this.isReady = true;
+      // Process any messages that were buffered
+      while (this.messageBuffer.length > 0) {
+          const rawData = this.messageBuffer.shift();
+          if (rawData) {
+              this._processMessage(rawData);
+          }
+      }
+  }
+
+  /** Internal method to parse and handle a received message. */
+  private _processMessage(rawData: string): void {
+      try {
+          // Assuming server sends messages with { type: string, payload: any } structure
+          const message = JSON.parse(rawData);
+          if (!message || typeof message.type !== 'string') {
+              logger.warn('Received invalid message structure from server:', rawData);
+              return;
+          }
+
+          // logger.debug(`Processing message: ${message.type}`); // Optional: Log processed type
+
+          switch (message.type) {
+              case 'welcome':
+                  const welcomePayload = message.payload as WelcomePayload;
+                  this.playerId = welcomePayload.id;
+                  this.playerColor = welcomePayload.color;
+                  if (this.onWelcome) this.onWelcome(welcomePayload);
+                  break;
+              case 'authoritative_state':
+                  const statePayload = message.payload as AuthoritativeState;
+                  if (this.onAuthoritativeState) this.onAuthoritativeState(statePayload);
+                  break;
+              default:
+                  logger.warn(`Received unknown message type: ${message.type}`);
+          }
+      } catch (error) {
+          logger.error("Failed to parse or process message:", error, "Raw data:", rawData);
+      }
+  }
+
+
   // Send the current input state to the server
-  // Send the current input state, including optional new bullet info if firing
-  sendInput(inputState: {
-    left: boolean;
-    right: boolean;
-    up: boolean;
-    down: boolean;
-    fire: boolean; // Fire button state this frame
-    newBullet?: { // Optional: Include details if a bullet was just fired locally
-      id: string;
-      x: number;
-      y: number;
-      velocityY: number;
-    }
-  }) {
+  // Use shared InputPayload type
+  sendInput(payload: InputPayload) {
     if (this.ws.readyState === WebSocket.OPEN) {
-      const msg: InputMsg = {
-        type: 'input',
-        left: inputState.left,
-        right: inputState.right,
-        up: inputState.up,
-        down: inputState.down,
-        fire: inputState.fire, // Send the fire button state
-        playerId: this.playerId || undefined,
-        // Add new bullet info if provided (when fire is true and cooldown allows)
-        ...(inputState.newBullet && {
-          newBulletId: inputState.newBullet.id,
-          newBulletX: inputState.newBullet.x,
-          newBulletY: inputState.newBullet.y,
-          newBulletVelocityY: inputState.newBullet.velocityY,
-        })
-      };
-      this.ws.send(JSON.stringify(msg));
+      this.send({ type: 'input', payload });
+    } else {
+        logger.warn("Attempted to send input while WebSocket was not open.");
     }
   }
-
-  sendGameStateUpdate(state: any) {
-    if (this.isMainPlayer) {
-      this.ws.send(JSON.stringify({ type: 'game_state_update', state }));
-    }
-  }
-
-  // Removed sendFire method, as firing is now included in sendInput
 
   // Send an arbitrary message to the server
   send(msg: any) {
     if (this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+    } else {
+        logger.warn("Attempted to send message while WebSocket was not open:", msg);
     }
   }
 }

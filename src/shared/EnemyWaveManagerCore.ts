@@ -1,3 +1,5 @@
+import { logger } from './logger'; // Import the shared logger
+
 /**
  * EnemyWaveManagerCore
  * Pure logic for enemy wave management, shared by client and server.
@@ -21,10 +23,6 @@ export class EnemyWaveManagerCore {
   private enemies: EnemyState[] = [];
   private waveNumber: number = 0;
   private nextEnemyId: number = 1;
-  public enemyBullets: any[] = []; // Array to hold enemy bullets
-  private nextBulletId: number = 0;
-  private bulletSpawnTimer: number = 0;
-  private bulletSpawnInterval: number = 1000; // Spawn bullet every 1 second (adjust as needed)
 
   constructor() {}
 
@@ -73,47 +71,9 @@ export class EnemyWaveManagerCore {
         enemy.visible = false;
       }
     }
+} // End update method
 
-   this.bulletSpawnTimer += delta;
-   if (this.bulletSpawnTimer >= this.bulletSpawnInterval) {
-     this.spawnEnemyBullet();
-     this.bulletSpawnTimer = 0; // Reset timer
-   }
 
-   // Update enemy bullets
-   for (const bullet of this.enemyBullets) {
-     if (bullet.active) {
-       bullet.y += bullet.speed * (delta / 1000); // Move bullet down
-       // Deactivate bullets that go off-screen (adjust threshold as needed)
-       if (bullet.y > gameHeight) { // Use gameHeight
-         bullet.active = false;
-         bullet.visible = false;
-       }
-     }
-   }
- }
-
- private spawnEnemyBullet() {
-   const activeEnemies = this.enemies.filter(enemy => enemy.active && enemy.visible);
-   if (activeEnemies.length === 0) return;
-
-   // Randomly select an enemy to fire
-   const shooterEnemy = activeEnemies[Math.floor(Math.random() * activeEnemies.length)];
-   if (!shooterEnemy) return;
-
-   const bulletId = `enemyBullet_${this.nextBulletId++}`;
-   const bullet = {
-     id: bulletId,
-     x: shooterEnemy.x,
-     y: shooterEnemy.y,
-     angle: 90, // Straight down
-     speed: 100,
-     active: true,
-     visible: true,
-   };
-   this.enemyBullets.push(bullet);
-   console.log(`[EnemyWaveManagerCore] spawned bullet ${bulletId} from enemy ${shooterEnemy.id} at ${bullet.x},${bullet.y}`);
- }
 
   public getEnemies(): EnemyState[] {
     return this.enemies;
@@ -138,7 +98,7 @@ export class EnemyWaveManagerCore {
  * Resets the vertical position of all currently active enemies to their original starting Y.
  */
 public resetActiveEnemyPositions(): void {
-  console.log(`[EnemyWaveManagerCore] Resetting active enemy positions to their startY.`);
+  logger.info(`[EnemyWaveManagerCore] Resetting active enemy positions to their startY.`); // Use logger.info
   for (const enemy of this.enemies) {
     if (enemy.active) {
       // Check if startY exists before assigning, though it always should after startWave
@@ -146,7 +106,7 @@ public resetActiveEnemyPositions(): void {
           enemy.y = enemy.startY;
       } else {
           // Fallback or warning if startY is missing for some reason
-          console.warn(`[EnemyWaveManagerCore] Enemy ${enemy.id} missing startY during reset. Resetting to 0.`);
+          logger.warn(`[EnemyWaveManagerCore] Enemy ${enemy.id} missing startY during reset. Resetting to 0.`); // Use logger.warn
           enemy.y = 0;
       }
       // Ensure they are marked as visible again if they went off-screen or were reset from bottom

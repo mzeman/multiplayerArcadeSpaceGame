@@ -1,121 +1,153 @@
-  import Phaser from 'phaser';
-import { GameScene } from '../scenes/GameScene';
-import { InputManager } from '../managers/InputManager';
-import { GameHUD } from '../ui/GameHUD';
-
-interface CollisionParams {
-  // Define CollisionParams interface here if needed
-}
+import Phaser from 'phaser';
+import { logger } from '@shared/logger'; // Import logger
+import { PlayerState } from '@shared/types'; // Import PlayerState
 
 export class Player {
-  sprite: Phaser.Physics.Arcade.Sprite;
-  scene: Phaser.Scene;
-  multiplayerClient?: any;
+  public sprite: Phaser.Physics.Arcade.Sprite;
+  private scene: Phaser.Scene;
+  public id: string; // Store player ID
 
-  lives: number;
-  color: string;
-  lastShotTime: number = 0;
-  public isActive: boolean = true; // Added to track player status based on server state
+  private color: string;
 
-  constructor(
-    scene: Phaser.Scene,
-    x: number,
-    y: number,
-    color: string = '#ffffff',
-    multiplayerClient?: any
-  ) {
+  // Internal state tracking
+  private currentLives: number;
+
+  // Properties for interpolation
+  private targetX: number;
+  private targetY: number;
+  private interpolationFactor: number = 0.2; // Adjust for desired smoothness
+
+  // Properties for effects
+  private invincibilityTween: Phaser.Tweens.Tween | null = null;
+  private hitTween: Phaser.Tweens.Tween | null = null; // For hit animation
+
+  constructor(scene: Phaser.Scene, x: number, y: number, id: string, initialState: PlayerState) {
     this.scene = scene;
-    this.color = color;
-    this.lives = 3;
-    this.multiplayerClient = multiplayerClient;
+    this.id = id;
+    this.color = initialState.color; // Use initialState
+    this.currentLives = initialState.lives; // Initialize lives
+    this.targetX = x; // Initialize target position
+    this.targetY = y;
     this.sprite = scene.physics.add.sprite(x, y, 'playerShip');
-    console.log('[Player] Constructor called', { x, y, color, sprite: !!this.sprite });
+
+    // Use initialState.color in log
+    logger.debug(`Player constructor for ID ${id}`, { x, y, color: initialState.color });
     if (!this.sprite) {
-      console.error('Failed to create player sprite!');
-      return;
+      logger.error(`Failed to create player sprite for ID ${id}!`);
+      throw new Error(`Failed to create player sprite for ID ${id}`);
     }
     this.sprite.setCollideWorldBounds(true);
     this.sprite.setDepth(100); // Force player above all enemies
     this.sprite.setAlpha(1);
     this.sprite.setScale(0.4); // Set desired visual scale
-    this.sprite.setTint(0xff00ff); // Bright magenta for visibility
+    // Removed initial tint setting here, setColor handles it
     if (this.sprite.body) {
       (this.sprite.body as Phaser.Physics.Arcade.Body).allowGravity = false;
     }
-    // Removed setDisplaySize and conflicting setScale(0.2)
+
     // Update physics body size to match visual scale (original base size 40x40 * 0.4 = 16x16)
     if (this.sprite.body) {
         (this.sprite.body as Phaser.Physics.Arcade.Body).setSize(16, 16);
-        // Body is usually centered by default when size changes relative to texture,
-        // unless origin is changed. Let's assume default centering is okay for now.
     }
     this.sprite.refreshBody(); // Apply body size changes
 
-    (this.sprite as any).lastEnemyCollisionTime = 0;
-    this.setColor(color);
-    // Log sprite properties for debug
-    console.log('[DEBUG] Player sprite properties:', {
-      x: this.sprite.x,
-      y: this.sprite.y,
-      depth: this.sprite.depth,
-      alpha: this.sprite.alpha,
-      scaleX: this.sprite.scaleX,
-      scaleY: this.sprite.scaleY,
-      displayWidth: this.sprite.displayWidth,
-      displayHeight: this.sprite.displayHeight,
-      tint: this.sprite.tintTopLeft,
-      visible: this.sprite.visible,
-      active: this.sprite.active,
-      body: this.sprite.body
+    this.setColor(this.color); // Apply initial color using the method
+    logger.debug(`Player sprite created for ID ${id}`, {
+        x: this.sprite.x, y: this.sprite.y, depth: this.sprite.depth, scale: this.sprite.scaleX, initialLives: this.currentLives
     });
-    // Log sprite properties for debug
-    console.log('[DEBUG] Player sprite properties:', {
-      x: this.sprite.x,
-      y: this.sprite.y,
-      depth: this.sprite.depth,
-      alpha: this.sprite.alpha,
-      scaleX: this.sprite.scaleX,
-      scaleY: this.sprite.scaleY,
-      tint: this.sprite.tintTopLeft,
-      visible: this.sprite.visible,
-      active: this.sprite.active,
-      displayWidth: this.sprite.displayWidth,
-      displayHeight: this.sprite.displayHeight,
-      body: this.sprite.body
-    });
-    console.log('[DEBUG] Player created:', { x, y, color, multiplayer: !!multiplayerClient });
+  } // End of constructor
+
+  // --- Methods for ClientPlayerManager ---
+
+  /** Stores the target position received from the server for interpolation. */
+  setTargetPosition(x: number, y: number): void {
+    this.targetX = x;
+    this.targetY = y;
   }
 
-  update(time: number, delta: number, cursors?: Phaser.Types.Input.Keyboard.CursorKeys, isFireDown?: boolean) {
-    console.log('[Player] update called', { time, delta, x: this.sprite?.x, y: this.sprite?.y, cursors, isFireDown });
-    // Handle movement
-    if (cursors) {
-      this.move(cursors);
-    }
+  /** Smoothly interpolates the sprite's position towards the target position. */
+  interpolatePosition(delta: number): void {
+    // Simple linear interpolation (lerp)
+    const newX = Phaser.Math.Linear(this.sprite.x, this.targetX, this.interpolationFactor);
+    const newY = Phaser.Math.Linear(this.sprite.y, this.targetY, this.interpolationFactor);
+    this.sprite.setPosition(newX, newY);
+  }
 
-    // Handle shooting (basic example: fire if isFireDown is true and enough time has passed)
-    if (isFireDown && this.scene && (this as any).lastShotTime !== undefined) {
-      const now = time;
-      const shotInterval = 300; // ms between shots
-      if (!this.lastShotTime || now - this.lastShotTime > shotInterval) {
-        // Create a bullet at the player's position
-        if ((this.scene as any).bullets) {
-          const bullet = (this.scene as any).bullets.create(this.sprite.x, this.sprite.y - 20, 'bullet');
-          if (bullet && bullet.body) {
-            bullet.body.velocity.y = -400;
-            console.log('[Player] Bullet created', { x: bullet.x, y: bullet.y });
-            // Multiplayer: Fire action is now sent via sendInput in GameScene.ts
-            // No need to send a separate message here.
-          } else {
-            console.log('[Player] Bullet creation failed');
-          }
-        } else {
-          console.log('[Player] No bullets group on scene');
-        }
-        this.lastShotTime = now;
-      }
+  /** Manages the visual effect for invincibility (e.g., pulsing alpha). */
+  handleInvincibilityEffect(isInvincible: boolean): void {
+    if (isInvincible && !this.invincibilityTween) {
+      // Start pulsing tween if not already running
+      this.sprite.setAlpha(0.7); // Start slightly transparent
+      this.invincibilityTween = this.scene.tweens.add({
+        targets: this.sprite,
+        alpha: 0.3,
+        duration: 300,
+        ease: 'Sine.easeInOut',
+        yoyo: true,
+        repeat: -1 // Repeat indefinitely
+      });
+       logger.debug(`Player ${this.id} invincibility effect started.`);
+    } else if (!isInvincible && this.invincibilityTween) {
+      // Stop pulsing tween and reset alpha
+      this.invincibilityTween.stop();
+      this.invincibilityTween = null;
+      this.sprite.setAlpha(1.0); // Reset to fully opaque
+       logger.debug(`Player ${this.id} invincibility effect stopped.`);
     }
   }
+
+   /** Called every frame to update ongoing effects. */
+   updateEffects(delta: number): void {
+       // Currently handled by tween, but could add other time-based effects here
+   }
+
+   /** Returns the last known lives count for this player instance. */
+   getCurrentLives(): number {
+       return this.currentLives;
+   }
+
+   /** Updates the internal state representation, primarily lives for now. */
+   updateState(newState: PlayerState): void {
+       // Update lives if it changed
+       if (newState.lives !== this.currentLives) {
+            logger.debug(`Player ${this.id} internal lives updated from ${this.currentLives} to ${newState.lives}`);
+            this.currentLives = newState.lives;
+       }
+       // Could update other internal state if needed
+   }
+
+   /** Plays a brief visual hit animation (e.g., red flash). */
+   playHitAnimation(): void {
+       // Avoid starting a new hit animation if one is already playing or if invincible
+       if (this.hitTween || this.invincibilityTween) {
+           return;
+       }
+
+       // Ensure sprite exists
+       if (!this.sprite || !this.sprite.active) {
+           return;
+       }
+
+       const originalTint = this.sprite.tintTopLeft; // Store original tint (might be player color)
+       const hitColor = 0xff0000; // Red
+
+       // Use a short tween for the flash effect
+       this.sprite.setTint(hitColor);
+       this.hitTween = this.scene.tweens.add({
+           targets: this.sprite,
+           duration: 100, // Short duration for flash
+           ease: 'Linear',
+           onComplete: () => {
+               // Restore original tint only if not invincible
+               if (this.sprite && this.sprite.active && !this.invincibilityTween) {
+                   this.sprite.setTint(originalTint);
+               }
+               this.hitTween = null; // Allow next hit animation
+           }
+       });
+   }
+
+  // --- Original Methods (Refactored) ---
 
   setColor(color: string) {
     this.color = color;
@@ -125,94 +157,30 @@ export class Player {
       let rgb = parsed ? parsed.color : 0x000000;
       // Check if color is too dark (all channels < 40)
       if (parsed && typeof parsed !== 'number') {
-        // Phaser.Display.Color.HexStringToColor returns an object with a 'color' property and a 'color32' property,
-        // but not r/g/b directly. Use getColor() to get the RGB values.
         const rgbObj = Phaser.Display.Color.IntegerToRGB(parsed.color);
         if (rgbObj.r < 40 && rgbObj.g < 40 && rgbObj.b < 40) {
           rgb = 0xffff00; // fallback to yellow
-          console.warn('[DEBUG] Player color too dark, using fallback yellow for visibility');
+          logger.warn(`Player ${this.id} color ${color} too dark, using fallback yellow.`);
         }
         this.sprite.setTint(rgb);
-        // Log the color actually used
-        console.log('[DEBUG] Player setColor:', { requested: color, used: rgb, r: rgbObj.r, g: rgbObj.g, b: rgbObj.b });
       } else {
         this.sprite.setTint(rgb);
-        console.log('[DEBUG] Player setColor:', { requested: color, used: rgb });
-      }
-    }
-  }
-
-  move(cursors: Phaser.Types.Input.Keyboard.CursorKeys) {
-    const speed = 200;
-    if (!this.sprite.body) return;
-
-    (this.sprite.body as Phaser.Physics.Arcade.Body).setVelocity(0);
-
-    if (cursors.left?.isDown) {
-      (this.sprite.body as Phaser.Physics.Arcade.Body).setVelocityX(-speed);
-    } else if (cursors.right?.isDown) {
-      (this.sprite.body as Phaser.Physics.Arcade.Body).setVelocityX(speed);
-    }
-
-    if (cursors.up?.isDown) {
-      (this.sprite.body as Phaser.Physics.Arcade.Body).setVelocityY(-speed);
-    } else if (cursors.down?.isDown) {
-      (this.sprite.body as Phaser.Physics.Arcade.Body).setVelocityY(speed);
-    }
-  }
-
-  /**
-   * Handles firing logic for the player.
-   * @param bulletsGroup The Phaser group to add bullets to.
-   * @param time The current game time.
-   * @param lastFired The last time a bullet was fired.
-   * @returns true if a bullet was fired, false otherwise.
-   */
-  fire(bulletsGroup: Phaser.Physics.Arcade.Group, time: number, lastFired: number): boolean {
-    // 200ms cooldown
-    if (!this.sprite || !bulletsGroup) return false;
-    if (time < lastFired) return false;
-
-    const bullet = bulletsGroup.create(this.sprite.x, this.sprite.y - 20, 'bullet') as Phaser.Physics.Arcade.Image;
-    if (bullet.body && bullet.body instanceof Phaser.Physics.Arcade.Body) {
-      bullet.setDisplaySize(4, 12);
-      bullet.body.setSize(4, 12);
-      bullet.setTint(0xffff00);
-      bullet.body.allowGravity = false;
-      bullet.body.setVelocityY(-400);
-      console.log('[DEBUG] Bullet fired:', { x: bullet.x, y: bullet.y, velocityY: -400 });
-    } else {
-      console.warn('[DEBUG] Bullet creation failed in fire()');
-    }
-    return true;
-  }
-
-  takeDamage(bullet: Phaser.GameObjects.GameObject, lives: number, showExplosion: (x: number, y: number, size?: string) => void, gameHUD: GameHUD, gameOverHandler: () => void) {
-    if (this.scene && this.sprite) {
-      bullet.destroy();
-      // Show explosion at player position
-      const gameScene = this.scene as GameScene;
-      if (lives > 1) {
-        showExplosion(this.sprite.x, this.sprite.y, "small");
-      } else if (lives === 1) {
-        showExplosion(this.sprite.x, this.sprite.y, "large");
-      }
-      let newLives = lives;
-      if (lives > 0) {
-        newLives--;
-        newLives = Math.max(0, newLives);
-      }
-      if (gameHUD) {
-        gameHUD.updateLives(newLives);
-      }
-      if (newLives <= 0) {
-        gameOverHandler();
       }
     }
   }
 
   destroy() {
-    if (this.sprite && this.sprite.destroy) {
+    // Ensure tweens are stopped on destroy
+    if (this.invincibilityTween) {
+        this.invincibilityTween.stop();
+        this.invincibilityTween = null;
+    }
+    if (this.hitTween) {
+        this.hitTween.stop();
+        this.hitTween = null;
+    }
+    if (this.sprite) {
+      logger.debug(`Destroying player sprite for ID ${this.id}`);
       this.sprite.destroy();
     }
   }

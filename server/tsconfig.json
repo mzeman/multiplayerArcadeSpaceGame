@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2016", // Or a later version if preferred
+    "module": "CommonJS", // Standard for Node.js
+    "outDir": "../dist", // Output directory for compiled JS, relative to tsconfig.json
+    // "rootDir": "src", // Removed again - causes issues with path aliases outside this dir
+    "baseUrl": "../", // Base directory for path mapping (project root)
+    "paths": {
+      "@shared/*": ["src/shared/*"] // Map @shared/* to project's src/shared/* (relative to new baseUrl)
+    },
+    "strict": true, // Enable all strict type-checking options
+    "esModuleInterop": true, // Enables compatibility with CommonJS modules
+    "skipLibCheck": true, // Skip type checking of declaration files
+    "forceConsistentCasingInFileNames": true, // Disallow inconsistently-cased references
+    "resolveJsonModule": true // Allows importing JSON files
+  },
+  "include": [
+    "src/**/*" // Include all files in the src directory
+  ],
+  "exclude": [
+    "node_modules", // Exclude node_modules
+    "../node_modules" // Exclude project root node_modules
+  ]
+}

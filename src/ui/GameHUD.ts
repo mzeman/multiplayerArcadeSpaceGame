@@ -4,7 +4,7 @@ export class GameHUD {
   private scene: Phaser.Scene;
   private livesText!: Phaser.GameObjects.Text;
   private waveText!: Phaser.GameObjects.Text;
-  public _created: boolean = false;
+  private isReady: boolean = false; // Renamed _created for clarity
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -24,17 +24,17 @@ export class GameHUD {
       { font: '20px Arial', color: '#fff' }
     );
     this.waveText.setOrigin(0, 0);
-    this._created = true;
+    this.isReady = true; // Set ready flag
   }
 
   updateLives(lives: number) {
-    if (this.livesText) {
+    if (this.isReady && this.livesText) { // Check readiness
       this.livesText.setText('Lives: ' + Math.max(0, lives));
     }
   }
 
   updateWave(waveNumber: number) {
-    if (this.waveText) {
+    if (this.isReady && this.waveText) { // Check readiness
       this.waveText.setText('Wave: ' + waveNumber);
     }
   }
@@ -42,6 +42,6 @@ export class GameHUD {
   destroy() {
     if (this.livesText) this.livesText.destroy();
     if (this.waveText) this.waveText.destroy();
-    this._created = false;
+    this.isReady = false;
   }
 }
