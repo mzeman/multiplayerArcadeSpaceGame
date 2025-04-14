@@ -197,7 +197,7 @@ classDiagram
         class CollisionSystem {
             +update()
         }
-    %% } -- Removed subgraph grouping
+    } %% -- Removed subgraph grouping closing brace
 
     %% subgraph Client ["Client"] { -- Removed subgraph grouping
         class GameScene {
@@ -272,7 +272,7 @@ classDiagram
              +setTargetPosition()
              +interpolatePosition()
         }
-    %% } -- Removed subgraph grouping
+    } %% -- Removed subgraph grouping closing brace
 
     %% subgraph Shared ["Shared"] { -- Removed subgraph grouping
         class EnemyWaveManagerCore {
@@ -296,7 +296,7 @@ classDiagram
         interface InputPayload
         interface WelcomePayload
         enum GameStateEnum
-    %% } -- Removed subgraph grouping
+    } %% -- Removed subgraph grouping closing brace
 
     GameServer o-- GameLoop
     GameServer o-- GameStateManager
