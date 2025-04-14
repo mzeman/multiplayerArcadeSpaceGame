@@ -31,7 +31,7 @@ Clients (`src/`) primarily send input via `src/network/MultiplayerClient.ts` and
 
 ```mermaid
 graph TD
-    subgraph Client [Client (src/)]
+    subgraph Client ["Client (src/)"]
         Input[Input (Keyboard)] --> IM(managers/InputManager.ts)
         IM --> GS(scenes/GameScene.ts)
         GS -- Sends Input --> MC(network/MultiplayerClient.ts)
@@ -50,7 +50,7 @@ graph TD
         BulletSprites --> Render
         Render --> Display
     end
-    subgraph Server [Server (server/src/)]
+    subgraph Server ["Server (server/src/)"]
         S_GS -- Manages --> S_WS[WebSocket Connections]
         S_GS -- Routes Input --> S_PM(PlayerManager.ts)
         S_GS -- Coordinates --> S_Loop(GameLoop.ts)
@@ -155,7 +155,7 @@ sequenceDiagram
 classDiagram
     direction LR
 
-    package Server {
+    subgraph Server ["Server"] {
         class GameServer {
             +wss: WebSocketServer
             +clients: Map<WebSocket, PlayerId>
@@ -199,7 +199,7 @@ classDiagram
         }
     }
 
-    package Client {
+    subgraph Client ["Client"] {
         class GameScene {
             +multiplayerClient
             +clientStateManager
@@ -274,7 +274,7 @@ classDiagram
         }
     }
 
-    package Shared {
+    subgraph Shared ["Shared"] {
         class EnemyWaveManagerCore {
             -enemies: EnemyState[]
             +startWave()
