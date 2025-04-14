@@ -68,8 +68,6 @@ graph TD
         S_GS -- Sends State --> S_WS
     end
 
-    style Client fill:#ccf,stroke:#333,stroke-width:2px
-    style Server fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
 </details>
@@ -155,7 +153,6 @@ sequenceDiagram
 classDiagram
     direction LR
 
-    %% subgraph Server ["Server"] {  -- Removed subgraph grouping
         class GameServer {
             +wss: WebSocketServer
             +clients: Map<WebSocket, PlayerId>
@@ -198,7 +195,6 @@ classDiagram
             +update()
         }
 
-    %% subgraph Client ["Client"] { -- Removed subgraph grouping
         class GameScene {
             +multiplayerClient
             +clientStateManager
@@ -272,7 +268,6 @@ classDiagram
              +interpolatePosition()
         }
 
-    %% subgraph Shared ["Shared"] { -- Removed subgraph grouping
         class EnemyWaveManagerCore {
             -enemies: EnemyState[]
             +startWave()
