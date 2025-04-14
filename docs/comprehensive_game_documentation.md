@@ -31,8 +31,8 @@ Clients (`src/`) primarily send input via `src/network/MultiplayerClient.ts` and
 
 ```mermaid
 graph TD
-    subgraph Client [Client (src/)]
-        Input[Input (Keyboard)] --> IM(managers/InputManager.ts)
+    subgraph Client ["Client (src/)"]
+        Input["Input (Keyboard)"] --> IM(managers/InputManager.ts)
         IM --> GS(scenes/GameScene.ts)
         GS -- Sends Input --> MC(network/MultiplayerClient.ts)
         MC -- WebSocket --> S_GS(server/src/GameServer.ts)
@@ -50,7 +50,7 @@ graph TD
         BulletSprites --> Render
         Render --> Display
     end
-    subgraph Server [Server (server/src/)]
+    subgraph Server ["Server (server/src/)"]
         S_GS -- Manages --> S_WS[WebSocket Connections]
         S_GS -- Routes Input --> S_PM(PlayerManager.ts)
         S_GS -- Coordinates --> S_Loop(GameLoop.ts)
@@ -155,7 +155,7 @@ sequenceDiagram
 classDiagram
     direction LR
 
-    package Server {
+    %% subgraph Server ["Server"] {  -- Removed subgraph grouping
         class GameServer {
             +wss: WebSocketServer
             +clients: Map<WebSocket, PlayerId>
@@ -197,9 +197,9 @@ classDiagram
         class CollisionSystem {
             +update()
         }
-    }
+    %% } -- Removed subgraph grouping
 
-    package Client {
+    %% subgraph Client ["Client"] { -- Removed subgraph grouping
         class GameScene {
             +multiplayerClient
             +clientStateManager
@@ -272,9 +272,9 @@ classDiagram
              +setTargetPosition()
              +interpolatePosition()
         }
-    }
+    %% } -- Removed subgraph grouping
 
-    package Shared {
+    %% subgraph Shared ["Shared"] { -- Removed subgraph grouping
         class EnemyWaveManagerCore {
             -enemies: EnemyState[]
             +startWave()
@@ -296,7 +296,7 @@ classDiagram
         interface InputPayload
         interface WelcomePayload
         enum GameStateEnum
-    }
+    %% } -- Removed subgraph grouping
 
     GameServer o-- GameLoop
     GameServer o-- GameStateManager
