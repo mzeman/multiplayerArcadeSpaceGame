@@ -23,7 +23,8 @@ export class EnemyWaveManager {
   }
 
   update(delta: number) {
-    this.core.update(delta); // Update enemy wave and bullets
+    // Pass the game height from the scene's scale manager
+    this.core.update(delta, this.scene.scale.height); // Update enemy wave and bullets
 
     const enemyStates: EnemyState[] = this.core.getEnemies();
     if ((this.scene as any).socket) {

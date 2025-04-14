@@ -71,10 +71,13 @@ export class CollisionManager {
     playerObj: Phaser.GameObjects.GameObject,
     bullet: Phaser.GameObjects.GameObject
   ) => {
-    if (this.inputManager.isInvincible()) return;
+    // Removed client-side invincibility check; Server is authoritative
     bullet.destroy();
 
     let lives = this.getLives();
+    // --- Explosion Debug ---
+    console.log(`[CollisionManager] Bullet hit player. Invincible: ${this.inputManager.isInvincible()}, Current Lives (client): ${lives}`);
+    // --- End Explosion Debug ---
     if (this.player.sprite && this.player.sprite.scene) {
       if (lives > 1) {
         showExplosion(this.player.sprite.scene, this.player.sprite.x, this.player.sprite.y, "small");
@@ -100,7 +103,7 @@ export class CollisionManager {
     playerObj: Phaser.GameObjects.GameObject,
     bullet: Phaser.GameObjects.GameObject
   ) => {
-    if (this.inputManager.isInvincible()) return;
+    // Removed client-side invincibility check; Server is authoritative
     bullet.destroy();
 
     let lives = this.getLives();
@@ -131,7 +134,7 @@ export class CollisionManager {
   ) => {
     const playerSprite = playerObj as any;
     const enemySprite = enemyObj as any;
-    if (this.inputManager.isInvincible()) return;
+    // Removed client-side invincibility check; Server is authoritative
     const now = Date.now();
     if (!playerSprite.lastEnemyCollisionTime || now - playerSprite.lastEnemyCollisionTime >= 800) {
       playerSprite.lastEnemyCollisionTime = now;

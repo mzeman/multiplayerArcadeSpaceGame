@@ -111,6 +111,7 @@ export class GameScene extends Phaser.Scene {
           this.authoritativeState = msg;
           if (this.stateSendTimer) { clearInterval(this.stateSendTimer); this.stateSendTimer = null; }
           if (msg.waveNumber !== undefined) this.waveNumber = msg.waveNumber;
+          const previousServerGameState = this.serverGameState; // Store previous state
           this.serverGameState = msg.gameState || 'playing'; // Update overall game state
 
           const now = Date.now(); // Use system time for state updates
@@ -139,6 +140,7 @@ export class GameScene extends Phaser.Scene {
                 player.sprite.visible = true;
                 // Initialize properties for NEW player sprite
                 const sprite = player.sprite as any;
+                // Removed setScale(1.5) - Scaling is now handled in Player constructor
                 sprite.x = p.x; // Set initial position directly
                 sprite.y = p.y;
                 sprite.prevX = p.x; // Initialize prev/target for interpolation
@@ -181,12 +183,34 @@ export class GameScene extends Phaser.Scene {
                 // Common updates for both local and remote
                 this.players[id].setColor(p.color);
                 this.players[id].lives = p.lives;
+
+                // --- Start Reset Visibility Debug Logging ---
+                let visibilityBeforeUpdate: boolean | undefined;
+                if (previousServerGameState === 'gameOver' && this.serverGameState === 'playing') {
+                    visibilityBeforeUpdate = sprite.visible; // Capture visibility before update
+                }
+                // --- End Reset Visibility Debug Logging ---
+
                 this.players[id].isActive = p.isActive; // Update player active status
-                // Visibility is handled later based on localPlayerIsActive and serverGameState
+                // Set visibility for ALL players based on server state
+                sprite.visible = p.isActive;
 
                 // Update local player active status tracker
                 if (id === this.localPlayerId) {
+                  const previousLocalActiveState = this.localPlayerIsActive; // Store previous
                   this.localPlayerIsActive = p.isActive;
+                  // Add logging here if state changed from gameOver to playing
+                  if (previousServerGameState === 'gameOver' && this.serverGameState === 'playing') {
+                      // --- Start Reset Visibility Debug Logging ---
+                      console.groupCollapsed(`[Reset Visibility Debug] Local Player ID: ${this.localPlayerId}`);
+                      console.log(`Server State for Player:`, p); // Log the received player state
+                      console.log(`Sprite Visibility BEFORE update: ${visibilityBeforeUpdate}`);
+                      console.log(`Sprite Visibility AFTER update: ${sprite.visible}`);
+                      console.groupEnd();
+                      // --- End Reset Visibility Debug Logging ---
+                      // Original log:
+                      console.log(`[Reset Debug Client] Game state changed to 'playing'. Received isActive: ${p.isActive}. Updated localPlayerIsActive from ${previousLocalActiveState} to ${this.localPlayerIsActive}.`);
+                  }
                 }
 
                 // Handle Invincibility Visual Effect for Local Player
@@ -357,13 +381,24 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
       }
     } else {
       const newBullet = this.enemyBullets.create(serverBullet.x, serverBullet.y, 'bullet') as Phaser.Physics.Arcade.Sprite;
-      if (newBullet && newBullet.body) {
-        newBullet.setData('bulletId', serverBullet.id);
-        // Set velocity for new enemy bullets, including horizontal for Falcons
-        (newBullet.body as Phaser.Physics.Arcade.Body).setVelocity(serverBullet.velocityX || 0, serverBullet.velocityY);
-        newBullet.active = true;
-        newBullet.visible = true;
-        this.localEnemyBullets.set(serverBullet.id, newBullet);
+      if (newBullet) { // Check if sprite was created
+        // Ensure physics body is enabled and sized correctly
+        this.physics.world.enable(newBullet); // Explicitly enable physics
+        const body = newBullet.body as Phaser.Physics.Arcade.Body;
+        if (body) {
+            newBullet.setData('bulletId', serverBullet.id);
+            // Set velocity for new enemy bullets, including horizontal for Falcons
+            body.setVelocity(serverBullet.velocityX || 0, serverBullet.velocityY);
+            // Explicitly set body size
+            body.setSize(8, 16); // Match server BULLET_WIDTH, BULLET_HEIGHT
+            body.enable = true; // Ensure body is enabled
+            newBullet.active = true;
+            newBullet.visible = true;
+            this.localEnemyBullets.set(serverBullet.id, newBullet);
+        } else {
+             console.warn(`[GameScene] Failed to get physics body for new enemy bullet: ${serverBullet.id}`);
+             newBullet.destroy(); // Clean up sprite if body failed
+        }
 
         // Apply tint based on bulletType for new bullets
         if (serverBullet.bulletType === 'falcon') {
@@ -387,11 +422,13 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
 }
 // --- End Enemy Bullet Reconciliation ---
 
-  // --- Handle Player Visibility, Waiting Text, and Game Over UI ---
-  const localPlayerSprite = this.localPlayerId ? this.players[this.localPlayerId]?.sprite : null;
-  if (localPlayerSprite) {
-      localPlayerSprite.setVisible(this.localPlayerIsActive); // Show/hide local player based on active status
+  // Log UI state decisions based on the updated flags before applying them
+  if (previousServerGameState === 'gameOver' && this.serverGameState === 'playing') {
+       console.log(`[Reset Debug Client UI] Post-reset check: localPlayerIsActive=${this.localPlayerIsActive}, serverGameState=${this.serverGameState}. Waiting text visible: ${!this.localPlayerIsActive && this.serverGameState === 'playing'}`);
   }
+
+  // --- Handle Waiting Text and Game Over UI ---
+  // Player sprite visibility is now handled directly within the player update loop (line ~195) based on server's isActive flag.
   this.waitingText?.setVisible(!this.localPlayerIsActive && this.serverGameState === 'playing'); // Show waiting text if local player inactive but game ongoing
 
   if (this.serverGameState === 'gameOver' && this.gameOverUI) {
@@ -461,7 +498,7 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
 
                 sprite.x = Phaser.Math.Linear(sprite.prevX, sprite.targetX, t);
                 sprite.y = Phaser.Math.Linear(sprite.prevY, sprite.targetY, t);
-                sprite.visible = true; // Keep visible during interpolation
+                // Visibility is now handled solely in onAuthoritativeState based on p.isActive
 
                 // Optional detailed logging (uncomment if needed)
                 // Add checks before logging .toFixed()
@@ -474,9 +511,9 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
                 console.log(`[Interp Remote Player ${id}] Inputs: t=${typeof t === 'number' ? t.toFixed(2) : 'undef'}, elapsed=${elapsed}, prev=(${logPrevX}, ${logPrevY}), target=(${logTargetX}, ${logTargetY})`);
                 // Add checks before logging .toFixed()
                 console.log(`[Interp Remote Player ${id}] Result: new=(${logNewX}, ${logNewY})`);
-            } else if (sprite && !sprite.active) {
-                 sprite.visible = false; // Hide inactive sprites
             }
+            // Removed else if block that set visibility based on sprite.active
+            // Visibility is now handled solely in onAuthoritativeState based on p.isActive
         }
     });
     // Interpolate enemies using the enemiesById map
@@ -664,6 +701,14 @@ if (Array.isArray(msg.enemyBullets) && this.enemyBullets) {
         // Removed onEnemyDestroyed callback - server handles destruction
       );
 
+      // --- Collision Setup Debug ---
+      console.log('[Collision Debug] Setting up overlaps. Groups:', {
+          enemyBullets: this.enemyBullets,
+          playersGroup: this.playersGroup,
+          collisionManager: this.collisionManager
+      });
+      console.log('[Collision Debug] Handler function:', this.collisionManager.handleEnemyBulletPlayerCollision);
+      // --- End Collision Setup Debug ---
       // Set up collision handlers
       this.physics.add.overlap(this.bullets, this.enemies, this.collisionManager.handleBulletEnemyCollision as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback, undefined, this.collisionManager);
       this.physics.add.overlap(this.enemyBullets, this.playersGroup, this.collisionManager.handleEnemyBulletPlayerCollision as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback, undefined, this.collisionManager);

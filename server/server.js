@@ -36,8 +36,8 @@ let overallGameState = 'playing'; // 'playing' or 'gameOver'
 // Game simulation parameters
 const PLAYER_SPEED = 200;
 const BULLET_SPEED = 400;
-const GAME_WIDTH = 800; // Assuming a game width
-const GAME_HEIGHT = 600; // Assuming a game height
+const GAME_WIDTH = 1024; // Assuming a game width
+const GAME_HEIGHT = 768; // Assuming a game height
 const SERVER_TICK_RATE = 1000 / 60; // approx 60Hz
 let lastTickTime = Date.now();
 
@@ -114,6 +114,7 @@ function resetGameState() {
     players[id].input = { left: false, right: false, up: false, down: false, fire: false };
     delete players[id].lastShotTime; // Reset shot cooldown
     players[id].isActive = true; // Reset active status
+    console.log(`[Reset Debug] Setting player ${id} isActive to true.`); // Added log
   }
   overallGameState = 'playing'; // Reset overall game state
   // Clear bullets
@@ -125,6 +126,12 @@ function resetGameState() {
   gameStarted = true; // Or false if we require 'ready' again? Let's keep it true for now.
 
   // Immediately broadcast the reset state
+  // Added logs before broadcasting reset state
+  const playersStateForLog = {};
+  for (const id in players) {
+      playersStateForLog[id] = { lives: players[id].lives, isActive: players[id].isActive };
+  }
+  console.log('[Reset Debug] Broadcasting reset state with players:', JSON.stringify(playersStateForLog));
   broadcastState();
 }
 
@@ -146,7 +153,8 @@ wss.on('connection', function connection(ws) {
     input: { left: false, right: false, up: false, down: false, fire: false }, // Store last known input state
     isInvincible: false, // Add invincibility state
     invincibleUntil: 0,  // Timestamp until invincibility lasts
-    isActive: true       // Add active status
+    isActive: true,      // Add active status
+    lastEnemyCollisionTime: 0 // Timestamp for enemy collision cooldown
   };
 
   // No longer need to assign main player
@@ -157,6 +165,9 @@ wss.on('connection', function connection(ws) {
   // On join, send the current authoritative state
   const currentState = gatherCurrentState();
   ws.send(JSON.stringify({ type: 'authoritative_state', ...currentState }));
+  // Also broadcast the updated state to all existing clients
+  console.log(`[Server] Broadcasting state to all clients after new player ${id} joined.`);
+  broadcastState();
 
   ws.on('message', function incoming(message) {
     let data;
@@ -234,14 +245,13 @@ wss.on('connection', function connection(ws) {
     // Handle invincibility toggle request only if player exists and is active
     if (data.type === 'toggleInvincible' && players[id] && players[id].isActive) {
       const now = Date.now();
-      // Allow toggling only if not currently invincible
-      if (!players[id].isInvincible) {
-        console.log(`[Server] Player ${id} activated invincibility.`);
-        players[id].isInvincible = true;
-        players[id].invincibleUntil = now + 5000; // 5 seconds duration
+      // Toggle the invincibility state
+      players[id].isInvincible = !players[id].isInvincible;
+      players[id].invincibleUntil = 0; // Clear any previous timer value
+      console.log(`[Server] Player ${id} toggled invincibility to: ${players[id].isInvincible}`);
       }
       // Note: We don't handle toggling *off* via message here, only expiration or reset
-    } else if (data.type === 'toggleInvincible' && players[id] && !players[id].isActive) {
+    else if (data.type === 'toggleInvincible' && players[id] && !players[id].isActive) {
        // console.log(`[Server] Ignored invincibility toggle from inactive player ${id}`);
     }
   });
@@ -285,12 +295,6 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
   }
 
   // Check for invincibility expiration
-  for (const id in players) {
-    if (players[id].isInvincible && now > players[id].invincibleUntil) {
-      players[id].isInvincible = false;
-      console.log(`[Server] Player ${id} invincibility expired.`);
-    }
-  }
 
   // Update player bullet positions
   const remainingBullets = [];
@@ -304,7 +308,8 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
   playerBullets = remainingBullets;
 
   // Update enemy positions
-  enemyWaveManager.update(delta * 1000); // delta is in ms
+  enemyWaveManager.update(delta * 1000, GAME_HEIGHT); // Pass game height
+
 
   // --- Enemy Shooting Logic ---
   const ENEMY_BULLET_SPEED = 200;
@@ -403,12 +408,6 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
   playerBullets = playerBullets.filter(b => !b._remove);
 
 
-  // --- Wave Progression ---
-  const allEnemiesInactive = enemies.length > 0 && enemies.every(e => !e.active);
-  if (allEnemiesInactive) {
-    const nextWave = enemyWaveManager.getWaveNumber() + 1;
-    enemyWaveManager.startWave(nextWave);
-  }
 
   // --- Enemy-Player and Enemy-Bullet Collisions ---
   // aabbCollision function moved to global scope
@@ -456,27 +455,94 @@ function updateGameState(playerWidth, playerHeight, enemyWidth, enemyHeight, bul
           player.x - playerWidth / 2, player.y - playerHeight / 2, playerWidth, playerHeight
         )
       ) {
-        // Apply damage only if player is not invincible
-        if (!player.isInvincible) {
-          player.lives = Math.max(0, player.lives - 1);
-          player.isActive = player.lives > 0; // Update active status immediately
-          console.log(`[Server] Player ${id} collided with enemy ${enemy.id}. Lives left: ${player.lives}. Active: ${player.isActive}`);
-          // Note: Enemy is not destroyed by player collision
-        } else {
-           console.log(`[Server] Player ${id} invincible, blocked collision with enemy ${enemy.id}`);
-        }
+        // Check cooldown (500ms) before applying damage from enemy collision
+        const cooldown = 500;
+        if (now - (player.lastEnemyCollisionTime || 0) > cooldown) {
+          // Apply damage only if player is not invincible
+          if (!player.isInvincible) {
+            player.lives = Math.max(0, player.lives - 1);
+            player.isActive = player.lives > 0; // Update active status immediately
+            player.lastEnemyCollisionTime = now; // Update timestamp after applying damage
+            console.log(`[Server] Player ${id} collided with enemy ${enemy.id}. Lives left: ${player.lives}. Active: ${player.isActive}`);
+            // Note: Enemy is not destroyed by player collision
+          } else {
+             console.log(`[Server] Player ${id} invincible, blocked collision with enemy ${enemy.id}`);
+          }
+        } // else: Cooldown active, ignore collision damage
       }
-    
-      // --- Check for Game Over Condition ---
-      if (overallGameState === 'playing') {
-        const activePlayers = Object.values(players).filter(p => p.isActive);
-        if (activePlayers.length === 0 && Object.keys(players).length > 0) {
-          console.log("[Server] All players inactive. Setting game state to gameOver.");
+    }
+  }
+
+  // --- Check for Game Over Condition (All Players Inactive) --- MOVED EARLIER
+  // This check runs after collisions update lives/active status
+  if (overallGameState === 'playing') {
+      const activePlayers = Object.values(players).filter(p => p.isActive);
+      // Ensure there are players connected before declaring game over based on lives
+      if (Object.keys(players).length > 0 && activePlayers.length === 0) {
+          // --- Add Detailed Logging Before Game Over ---
+          const playerStatesForLog = Object.entries(players).map(([id, p]) => ({ id, lives: p.lives, isActive: p.isActive }));
+          console.log("[Server Game Over Check] All players inactive condition met. Player States:", JSON.stringify(playerStatesForLog));
+          // --- End Detailed Logging ---
+          console.log("[Server] All players inactive (lives=0). Setting game state to gameOver.");
           overallGameState = 'gameOver';
-          // Optionally: Stop enemy spawning/movement? Depends on desired game over behavior.
+          // If game over is set here, broadcast and return to avoid further checks in this tick
+          broadcastState();
+          return;
+      }
+  }
+
+  // --- Check for Enemies Reaching Bottom & Player Invincibility --- MOVED LATER
+  // This check only runs if the game wasn't already ended by the 'All Players Inactive' check
+  if (overallGameState === 'playing') {
+    let enemyReachedBottomAndGameOver = false; // Flag to signal game over from this specific check
+    const currentEnemiesForBottomCheck = enemyWaveManager.getEnemies(); // Get potentially updated enemies
+    for (const enemy of currentEnemiesForBottomCheck) {
+      // Check only active enemies
+      if (enemy.active && enemy.y >= GAME_HEIGHT) { // Use GAME_HEIGHT constant
+        // Enemy reached bottom, now check player invincibility
+        let allActivePlayersInvincible = false;
+        const activePlayerIds = Object.keys(players).filter(id => players[id].isActive);
+
+        // Check if there are active players and if all of them are invincible
+        if (activePlayerIds.length > 0 && activePlayerIds.every(id => players[id].isInvincible === true)) {
+          allActivePlayersInvincible = true;
+        }
+
+        if (allActivePlayersInvincible) {
+          // Reset wave position because all active players are invincible
+          console.log('[Server] Enemy reached bottom, but all active players invincible. Resetting wave position.');
+          enemyWaveManager.resetActiveEnemyPositions(); // Reset positions to their original startX/startY
+          // Break the loop, wave is reset, continue the game loop
+          break;
+        } else {
+          // Enemy reached bottom and NOT all active players are invincible - Game Over
+          console.log('[Server] Enemy reached bottom. Game Over.');
+          overallGameState = 'gameOver';
+          enemyReachedBottomAndGameOver = true; // Signal that game ended here
+          // Break the loop, game is over
+          break;
         }
       }
     }
+    // If game ended due to enemy reaching bottom, broadcast and exit early
+    if (enemyReachedBottomAndGameOver) {
+      broadcastState();
+      return; // Stop updateGameState for this tick
+    }
+  }
+  // --- End Enemy Reaching Bottom Check ---
+
+  // --- Wave Progression --- MOVED LATER
+  // Check wave progression only if the game is still playing
+  if (overallGameState === 'playing') {
+      // Fetch enemies again in case their state changed (e.g., reset positions)
+      const currentEnemiesForWaveCheck = enemyWaveManager.getEnemies();
+      const allEnemiesInactive = currentEnemiesForWaveCheck.length > 0 && currentEnemiesForWaveCheck.every(e => !e.active);
+      if (allEnemiesInactive) {
+          const nextWave = enemyWaveManager.getWaveNumber() + 1;
+          console.log(`[Server] All enemies inactive. Starting wave ${nextWave}`);
+          enemyWaveManager.startWave(nextWave);
+      }
   }
 
   // Broadcast the updated state

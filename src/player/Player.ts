@@ -37,13 +37,20 @@ export class Player {
     this.sprite.setCollideWorldBounds(true);
     this.sprite.setDepth(100); // Force player above all enemies
     this.sprite.setAlpha(1);
-    this.sprite.setScale(1);
+    this.sprite.setScale(0.4); // Set desired visual scale
     this.sprite.setTint(0xff00ff); // Bright magenta for visibility
     if (this.sprite.body) {
       (this.sprite.body as Phaser.Physics.Arcade.Body).allowGravity = false;
     }
-    this.sprite.setDisplaySize(40, 40);
-    this.sprite.setScale(0.2, 0.2); // Restore original intended size
+    // Removed setDisplaySize and conflicting setScale(0.2)
+    // Update physics body size to match visual scale (original base size 40x40 * 0.4 = 16x16)
+    if (this.sprite.body) {
+        (this.sprite.body as Phaser.Physics.Arcade.Body).setSize(16, 16);
+        // Body is usually centered by default when size changes relative to texture,
+        // unless origin is changed. Let's assume default centering is okay for now.
+    }
+    this.sprite.refreshBody(); // Apply body size changes
+
     (this.sprite as any).lastEnemyCollisionTime = 0;
     this.setColor(color);
     // Log sprite properties for debug

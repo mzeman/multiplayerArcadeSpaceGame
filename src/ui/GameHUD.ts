@@ -12,14 +12,14 @@ export class GameHUD {
 
   create(initialLives: number, initialWave: number) {
     this.livesText = this.scene.add.text(
-      this.scene.scale.width - 20, 210,
+      this.scene.scale.width - 20, 20, // Moved to top
       'Lives: ' + initialLives,
       { font: '20px Arial', color: '#fff' }
     );
     this.livesText.setOrigin(1, 0);
 
     this.waveText = this.scene.add.text(
-      20, 210,
+      20, 20, // Moved to top
       'Wave: ' + initialWave,
       { font: '20px Arial', color: '#fff' }
     );
